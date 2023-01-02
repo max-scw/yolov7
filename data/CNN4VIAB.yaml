@@ -1,0 +1,12 @@
+# CNN4VIAB bearing assembly
+
+# train and val data as 1) directory: path/images/, 2) file: path/images.txt, or 3) list: [path1/images/, path2/images/]
+train: ./Trn.txt  # 94 images
+val: ./Val.txt  # 15 images
+test: ./Tst.txt  # 41 images
+
+# number of classes
+nc: 2
+
+# class names
+names: [ 'correct', 'wrong']
