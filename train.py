@@ -35,6 +35,10 @@ from utils.plots import plot_images, plot_labels, plot_results, plot_evolution
 from utils.torch_utils import ModelEMA, select_device, intersect_dicts, torch_distributed_zero_first, is_parallel
 from utils.wandb_logging.wandb_utils import WandbLogger, check_wandb_resume
 
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning,
+                        message="torch.meshgrid: in an upcoming release, it will be required to pass the indexing argument.")
+
 logger = logging.getLogger(__name__)
 
 
@@ -258,13 +262,17 @@ def train(hyp, opt, device, tb_writer=None):
                                        pad=0.5, prefix=colorstr('val: '))[0]
 
         if not opt.resume:
+            print(f"DEBUGGING: dataset.labels={dataset.labels}")
             labels = np.concatenate(dataset.labels, 0)
+            print(f"DEBUGGING: labels[:, 0]={labels[:, 0]}")
             c = torch.tensor(labels[:, 0])  # classes
+            print(f"DEBUGGING: c={c}")
             # cf = torch.bincount(c.long(), minlength=nc) + 1.  # frequency
             # model._initialize_biases(cf.to(device))
             if plots:
                 #plot_labels(labels, names, save_dir, loggers)
                 if tb_writer:
+                    print(f"DEBUGGING: tb_writer.add_histogram('classes', c, 0):tb_writer.add_histogram('classes', {c}, 0)")
                     tb_writer.add_histogram('classes', c, 0)
 
             # Anchors
@@ -563,6 +571,7 @@ if __name__ == '__main__':
     parser.add_argument('--freeze', nargs='+', type=int, default=[0], help='Freeze layers: backbone of yolov7=50, first3=0 1 2')
     parser.add_argument('--v5-metric', action='store_true', help='assume maximum recall as 1.0 in AP calculation')
     opt = parser.parse_args()
+    print(f"DEBUGGING: parser opt={opt}")
 
     # Set DDP variables
     opt.world_size = int(os.environ['WORLD_SIZE']) if 'WORLD_SIZE' in os.environ else 1
@@ -612,7 +621,9 @@ if __name__ == '__main__':
         if opt.global_rank in [-1, 0]:
             prefix = colorstr('tensorboard: ')
             logger.info(f"{prefix}Start with 'tensorboard --logdir {opt.project}', view at http://localhost:6006/")
+            print(f"DEBUGGING: SummaryWriter(opt.save_dir):SummaryWriter({opt.save_dir})")
             tb_writer = SummaryWriter(opt.save_dir)  # Tensorboard
+            tb_writer = False ### FIXME: delete line
         train(hyp, opt, device, tb_writer)
 
     # Evolve hyperparameters (optional)
