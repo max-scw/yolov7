@@ -9,7 +9,7 @@ import random
 import re
 import subprocess
 import time
-from pathlib import Path
+import pathlib as pl
 
 import cv2
 import numpy as np
@@ -51,7 +51,7 @@ def get_latest_run(search_dir='.'):
 
 def isdocker():
     # Is environment a Docker container
-    return Path('/workspace').exists()  # or Path('/.dockerenv').exists()
+    return pl.Path('/workspace').exists()  # or Path('/.dockerenv').exists()
 
 
 def emojis(str=''):
@@ -73,7 +73,7 @@ def check_git_status():
     # Recommend 'git pull' if code is out of date
     print(colorstr('github: '), end='')
     try:
-        assert Path('.git').exists(), 'skipping check (not a git repository)'
+        assert pl.Path('.git').exists(), 'skipping check (not a git repository)'
         assert not isdocker(), 'skipping check (Docker image)'
         assert check_online(), 'skipping check (offline)'
 
@@ -95,8 +95,8 @@ def check_requirements(requirements='requirements.txt', exclude=()):
     # Check installed dependencies meet requirements (pass *.txt file or list of packages)
     import pkg_resources as pkg
     prefix = colorstr('red', 'bold', 'requirements:')
-    if isinstance(requirements, (str, Path)):  # requirements.txt file
-        file = Path(requirements)
+    if isinstance(requirements, (str, pl.Path)):  # requirements.txt file
+        file = pl.Path(requirements)
         if not file.exists():
             print(f"{prefix} {file.resolve()} not found, check failed.")
             return
@@ -144,10 +144,11 @@ def check_imshow():
 
 def check_file(file):
     # Search for file if not found
-    if Path(file).is_file() or file == '':
+    if pl.Path(file).is_file() or file == '':
         return file
     else:
         files = glob.glob('./**/' + file, recursive=True)  # find file
+        print(f"DEBUGGING: file: {file}, files: {files}")
         assert len(files), f'File Not Found: {file}'  # assert file was found
         assert len(files) == 1, f"Multiple files match '{file}', specify exact path: {files}"  # assert unique
         return files[0]  # return file
@@ -157,13 +158,13 @@ def check_dataset(dict):
     # Download dataset if not found locally
     val, s = dict.get('val'), dict.get('download')
     if val and len(val):
-        val = [Path(x).resolve() for x in (val if isinstance(val, list) else [val])]  # val path
+        val = [pl.Path(x).resolve() for x in (val if isinstance(val, list) else [val])]  # val path
         if not all(x.exists() for x in val):
             print('\nWARNING: Dataset not found, nonexistent paths: %s' % [str(x) for x in val if not x.exists()])
             if s and len(s):  # download script
                 print('Downloading %s ...' % s)
                 if s.startswith('http') and s.endswith('.zip'):  # URL
-                    f = Path(s).name  # filename
+                    f = pl.Path(s).name  # filename
                     torch.hub.download_url_to_file(s, f)
                     r = os.system('unzip -q %s -d ../ && rm %s' % (f, f))  # unzip
                 else:  # bash script
@@ -234,7 +235,7 @@ def labels_to_class_weights(labels, nc=80):
 
 def labels_to_image_weights(labels, nc=80, class_weights=np.ones(80)):
     # Produces image weights based on class_weights and image contents
-    class_counts = np.array([np.bincount(x[:, 0].astype(np.int32), minlength=nc) for x in labels])
+    class_counts = np.array([np.bincount(x[:, 0].astype(np.int), minlength=nc) for x in labels])
     image_weights = (class_weights.reshape(1, nc) * class_counts).sum(1)
     # index = random.choices(range(n), weights=image_weights, k=1)  # weight image sample
     return image_weights
@@ -881,7 +882,7 @@ def apply_classifier(x, model, img, im0):
 
 def increment_path(path, exist_ok=True, sep=''):
     # Increment path, i.e. runs/exp --> runs/exp{sep}0, runs/exp{sep}1 etc.
-    path = Path(path)  # os-agnostic
+    path = pl.Path(path)  # os-agnostic
     if (path.exists() and exist_ok) or (not path.exists()):
         return str(path)
     else:
