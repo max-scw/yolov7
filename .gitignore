@@ -213,20 +213,9 @@ Temporary Items
 
 # User-specific stuff:
 .idea/*
-.idea/**/workspace.xml
-.idea/**/tasks.xml
-.idea/dictionaries
 .html  # Bokeh Plots
 .pg  # TensorFlow Frozen Graphs
 .avi # videos
-
-# Sensitive or high-churn files:
-.idea/**/dataSources/
-.idea/**/dataSources.ids
-.idea/**/dataSources.local.xml
-.idea/**/sqlDataSources.xml
-.idea/**/dynamic.xml
-.idea/**/uiDesigner.xml
 
 # Gradle:
 .idea/**/gradle.xml
