@@ -73,11 +73,11 @@ def train(hyp, opt, device, tb_writer=None):
     if rank in [-1, 0]:
         opt.hyp = hyp  # add hyperparameters
         run_id = torch.load(weights, map_location=device).get('wandb_id') if weights.endswith('.pt') and os.path.isfile(weights) else None
-        wandb_logger = WandbLogger(opt, Path(opt.save_dir).stem, run_id, data_dict)
-        loggers['wandb'] = wandb_logger.wandb
-        data_dict = wandb_logger.data_dict
-        if wandb_logger.wandb:
-            weights, epochs, hyp = opt.weights, opt.epochs, opt.hyp  # WandbLogger might update weights, epochs if resuming
+        # wandb_logger = WandbLogger(opt, Path(opt.save_dir).stem, run_id, data_dict)
+        # loggers['wandb'] = wandb_logger.wandb
+        # data_dict = wandb_logger.data_dict
+        # if wandb_logger.wandb:
+        #     weights, epochs, hyp = opt.weights, opt.epochs, opt.hyp  # WandbLogger might update weights, epochs if resuming
 
     nc = 1 if opt.single_cls else int(data_dict['nc'])  # number of classes
     names = ['item'] if opt.single_cls and len(data_dict['names']) != 1 else data_dict['names']  # class names
@@ -466,7 +466,8 @@ def train(hyp, opt, device, tb_writer=None):
                         'ema': deepcopy(ema.ema).half(),
                         'updates': ema.updates,
                         'optimizer': optimizer.state_dict(),
-                        'wandb_id': wandb_logger.wandb_run.id if wandb_logger.wandb else None}
+                        # 'wandb_id': wandb_logger.wandb_run.id if wandb_logger.wandb else None
+                        }
 
                 # Save last, best and delete
                 torch.save(ckpt, last)
@@ -521,11 +522,11 @@ def train(hyp, opt, device, tb_writer=None):
                 strip_optimizer(f)  # strip optimizers
         if opt.bucket:
             os.system(f'gsutil cp {final} gs://{opt.bucket}/weights')  # upload
-        if wandb_logger.wandb and not opt.evolve:  # Log the stripped model
-            wandb_logger.wandb.log_artifact(str(final), type='model',
-                                            name='run_' + wandb_logger.wandb_run.id + '_model',
-                                            aliases=['last', 'best', 'stripped'])
-        wandb_logger.finish_run()
+        # if wandb_logger.wandb and not opt.evolve:  # Log the stripped model
+        #     wandb_logger.wandb.log_artifact(str(final), type='model',
+        #                                     name='run_' + wandb_logger.wandb_run.id + '_model',
+        #                                     aliases=['last', 'best', 'stripped'])
+        # wandb_logger.finish_run()
     else:
         dist.destroy_process_group()
     torch.cuda.empty_cache()
@@ -582,8 +583,8 @@ if __name__ == '__main__':
     #    check_requirements()
 
     # Resume
-    wandb_run = check_wandb_resume(opt)
-    if opt.resume and not wandb_run:  # resume an interrupted run
+    # wandb_run = check_wandb_resume(opt)
+    if opt.resume: # and not wandb_run:  # resume an interrupted run
         ckpt = opt.resume if isinstance(opt.resume, str) else get_latest_run()  # specified or most recent path
         assert os.path.isfile(ckpt), 'ERROR: --resume checkpoint does not exist'
         apriori = opt.global_rank, opt.local_rank
