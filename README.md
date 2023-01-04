@@ -14,7 +14,7 @@ pip install -r requirements.txt
 ## Usage
 
 ````shell
-python train.py --device 'cpu' --batch-size 10 --data data/CNN4VIAB.yaml --img 640 640 --cfg cfg/training/yolov7-CNN4VIAB.yaml --weights 'yolov7_training.pt' --name yolov7-CNN4VIAB --hyp data/hyp.scratch.custom.yaml --epochs 4
+python train.py --device 'cpu' --batch-size 16 --data data/CNN4VIAB.yaml --img 640 640 --cfg cfg/training/yolov7-CNN4VIAB.yaml --weights 'yolov7_training.pt' --name yolov7-CNN4VIAB --hyp data/hyp.scratch.custom.yaml --epochs 300 --multi-scale --adam
 ````
 
 
@@ -32,12 +32,22 @@ python train.py --device 'cpu' --batch-size 10 --data data/CNN4VIAB.yaml --img 6
 
 
 
+## Inference
 
+On video:
+``` shell
+python detect.py --weights best.pt --conf 0.25 --img-size 640 --source <path to video>
+```
+
+On image:
+``` shell
+python detect.py --weights best.pt --conf 0.25 --img-size 640 --source <path to image>
+```
 
 ## Acknowledgements
 
 - Original code: [https://github.com/WongKinYiu/yolov7](https://github.com/WongKinYiu/yolov7)
-- Original papaer: [YOLOv7: Trainable bag-of-freebies sets new state-of-the-art for real-time object detectors](https://arxiv.org/abs/2207.02696), [![arxiv.org](http://img.shields.io/badge/cs.CV-arXiv%3A2207.02696-B31B1B.svg)](https://arxiv.org/abs/2207.02696)
+- Original paper: [YOLOv7: Trainable bag-of-freebies sets new state-of-the-art for real-time object detectors](https://arxiv.org/abs/2207.02696), [![arxiv.org](http://img.shields.io/badge/cs.CV-arXiv%3A2207.02696-B31B1B.svg)](https://arxiv.org/abs/2207.02696)
 
 
 ## Author

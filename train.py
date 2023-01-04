@@ -87,7 +87,7 @@ def train(hyp, opt, device, tb_writer=None):
     pretrained = weights.endswith('.pt')
     if pretrained:
         with torch_distributed_zero_first(rank):
-            print(f"DEBUGGING: no local weights found. Attempting to download weights={weights}")
+            print(f"colorstr(DEBUGGING): no local weights found. Attempting to download weights={weights}")
             attempt_download(weights)  # download if not found locally
         ckpt = torch.load(weights, map_location=device)  # load checkpoint
         model = Model(opt.cfg or ckpt['model'].yaml, ch=3, nc=nc, anchors=hyp.get('anchors')).to(device)  # create
@@ -263,17 +263,17 @@ def train(hyp, opt, device, tb_writer=None):
                                        pad=0.5, prefix=colorstr('val: '))[0]
 
         if not opt.resume:
-            print(f"DEBUGGING: dataset.labels={dataset.labels}")
+            print(f"colorstr(DEBUGGING): dataset.labels={dataset.labels}")
             labels = np.concatenate(dataset.labels, 0)
-            print(f"DEBUGGING: labels[:, 0]={labels[:, 0]}")
+            print(f"colorstr(DEBUGGING): labels[:, 0]={labels[:, 0]}")
             c = torch.tensor(labels[:, 0])  # classes
-            print(f"DEBUGGING: c={c}")
+            print(f"colorstr(DEBUGGING): c={c}")
             # cf = torch.bincount(c.long(), minlength=nc) + 1.  # frequency
             # model._initialize_biases(cf.to(device))
             if plots:
                 #plot_labels(labels, names, save_dir, loggers)
                 if tb_writer:
-                    print(f"DEBUGGING: tb_writer.add_histogram('classes', c, 0):tb_writer.add_histogram('classes', {c}, 0)")
+                    print(f"colorstr(DEBUGGING): tb_writer.add_histogram('classes', c, 0):tb_writer.add_histogram('classes', {c}, 0)")
                     tb_writer.add_histogram('classes', c, 0)
 
             # Anchors
@@ -566,14 +566,14 @@ if __name__ == '__main__':
     parser.add_argument('--quad', action='store_true', help='quad dataloader')
     parser.add_argument('--linear-lr', action='store_true', help='linear LR')
     parser.add_argument('--label-smoothing', type=float, default=0.0, help='Label smoothing epsilon')
-    parser.add_argument('--upload_dataset', action='store_true', help='Upload dataset as W&B artifact table')
-    parser.add_argument('--bbox_interval', type=int, default=-1, help='Set bounding-box image logging interval for W&B')
+    # parser.add_argument('--upload_dataset', action='store_true', help='Upload dataset as W&B artifact table')
+    # parser.add_argument('--bbox_interval', type=int, default=-1, help='Set bounding-box image logging interval for W&B')
     parser.add_argument('--save_period', type=int, default=-1, help='Log model after every "save_period" epoch')
     parser.add_argument('--artifact_alias', type=str, default="latest", help='version of dataset artifact to be used')
     parser.add_argument('--freeze', nargs='+', type=int, default=[0], help='Freeze layers: backbone of yolov7=50, first3=0 1 2')
     parser.add_argument('--v5-metric', action='store_true', help='assume maximum recall as 1.0 in AP calculation')
     opt = parser.parse_args()
-    print(f"DEBUGGING: parser opt={opt}")
+    print(f"colorstr(DEBUGGING): parser opt={opt}")
 
     # Set DDP variables
     opt.world_size = int(os.environ['WORLD_SIZE']) if 'WORLD_SIZE' in os.environ else 1
@@ -623,7 +623,7 @@ if __name__ == '__main__':
         if opt.global_rank in [-1, 0]:
             prefix = colorstr('tensorboard: ')
             logger.info(f"{prefix}Start with 'tensorboard --logdir {opt.project}', view at http://localhost:6006/")
-            print(f"DEBUGGING: SummaryWriter(opt.save_dir):SummaryWriter({opt.save_dir})")
+            print(f"colorstr(DEBUGGING): SummaryWriter(opt.save_dir):SummaryWriter({opt.save_dir})")
             tb_writer = SummaryWriter(opt.save_dir)  # Tensorboard
             tb_writer = False ### FIXME: delete line
         train(hyp, opt, device, tb_writer)
