@@ -14,7 +14,7 @@ pip install -r requirements.txt
 ## Usage
 
 ````shell
-python train.py --device 'cpu' --batch-size 16 --data data/CNN4VIAB.yaml --img 640 640 --cfg cfg/training/yolov7-CNN4VIAB.yaml --weights 'yolov7_training.pt' --name yolov7-CNN4VIAB --hyp data/hyp.scratch.custom.yaml --epochs 300 --multi-scale --adam
+python train.py --device 'cpu' --batch-size 16 --data data/CNN4VIAB.yaml --img 640 640 --cfg cfg/training/yolov7-CNN4VIAB.yaml --weights 'yolov7_training.pt' --name yolov7-CNN4VIAB --hyp data/hyp.scratch.custom.yaml --epochs 300 --adam
 ````
 
 

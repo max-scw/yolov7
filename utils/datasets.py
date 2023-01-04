@@ -27,7 +27,7 @@ from torchvision.utils import save_image
 from torchvision.ops import roi_pool, roi_align, ps_roi_pool, ps_roi_align
 
 from utils.general import check_requirements, xyxy2xywh, xywh2xyxy, xywhn2xyxy, xyn2xy, segment2box, segments2boxes, \
-    resample_segments, clean_str
+    resample_segments, clean_str, print_debug_msg
 from utils.torch_utils import torch_distributed_zero_first
 
 # Parameters
@@ -65,7 +65,7 @@ def exif_size(img):
 def create_dataloader(path, imgsz, batch_size, stride, opt, hyp=None, augment=False, cache=False, pad=0.0, rect=False,
                       rank=-1, world_size=1, workers=8, image_weights=False, quad=False, prefix=''):
     # Make sure only the first process in DDP process the dataset first, and the following others can use the cache
-    print(f"DEBUGGING: LoadImagesAndLabels, path: {path}")
+    print_debug_msg(f"LoadImagesAndLabels, path: {path}")
     with torch_distributed_zero_first(rank):
         dataset = LoadImagesAndLabels(path, imgsz, batch_size,
                                       augment=augment,  # augment images
@@ -77,7 +77,7 @@ def create_dataloader(path, imgsz, batch_size, stride, opt, hyp=None, augment=Fa
                                       pad=pad,
                                       image_weights=image_weights,
                                       prefix=prefix)
-    print(f"DEBUGGING: LoadImagesAndLabels... done")
+    print_debug_msg(f"LoadImagesAndLabels... done")
     batch_size = min(batch_size, len(dataset))
     nw = min([os.cpu_count() // world_size, batch_size if batch_size > 1 else 0, workers])  # number of workers
     sampler = torch.utils.data.distributed.DistributedSampler(dataset) if rank != -1 else None
@@ -397,14 +397,14 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
             cache, exists = self.cache_labels(cache_path, prefix), False  # cache
 
         # Display cache
-        print(f"DEBUGGING: Display cache")
+        print_debug_msg(f"Display cache")
         nf, nm, ne, nc, n = cache.pop('results')  # found, missing, empty, corrupted, total
         if exists:
             d = f"Scanning '{cache_path}' images and labels... {nf} found, {nm} missing, {ne} empty, {nc} corrupted"
             tqdm(None, desc=prefix + d, total=n, initial=n)  # display cache results
-        print(f"DEBUGGING: assert")
+        print_debug_msg(f"assert")
         assert nf > 0 or not augment, f'{prefix}No labels in {cache_path}. Can not train without labels. See {help_url}'
-        print(f"DEBUGGING: Read cache")
+        print_debug_msg(f"Read cache")
         # Read cache
         cache.pop('hash')  # remove hash
         cache.pop('version')  # remove version
@@ -474,11 +474,11 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         # Cache dataset labels, check images and read shapes
         x = {}  # dict
         nm, nf, ne, nc = 0, 0, 0, 0  # number missing, found, empty, duplicate
-        print(f"DEBUGGING: cache_labels ----------------------------------------------------------")
+        print_debug_msg(f"cache_labels ----------------------------------------------------------")
         pbar = tqdm(zip(self.img_files, self.label_files), desc='Scanning images', total=len(self.img_files))
         for i, (im_file, lb_file) in enumerate(pbar):
             try:
-                # print(f"DEBUGGING: verify images")
+                # print_debug_msg(f"verify images")
                 # verify images
                 im = Image.open(im_file)
                 im.verify()  # PIL verify
@@ -486,12 +486,12 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                 segments = []  # instance segments
                 assert (shape[0] > 9) & (shape[1] > 9), f'image size {shape} <10 pixels'
                 assert im.format.lower() in img_formats, f'invalid image format {im.format}'
-                # print(f"DEBUGGING: {im_file}")
+                # print_debug_msg(f"{im_file}")
 
                 # verify labels
                 if os.path.isfile(lb_file):
                     nf += 1  # label found
-                    # print(f"DEBUGGING: label found: {lb_file}")
+                    # print_debug_msg(f"label found: {lb_file}")
                     with open(lb_file, 'r') as f:
                         l = [x.split() for x in f.read().strip().splitlines()]
                         if any([len(x) > 8 for x in l]):  # is segment
@@ -499,7 +499,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                             segments = [np.array(x[1:], dtype=np.float32).reshape(-1, 2) for x in l]  # (cls, xy1...)
                             l = np.concatenate((classes.reshape(-1, 1), segments2boxes(segments)), 1)  # (cls, xywh)
                         l = np.array(l, dtype=np.float32)
-                        # print(f"DEBUGGING: l={l}")
+                        # print_debug_msg(f"l={l}")
                     if len(l):
                         assert l.shape[1] == 5, 'labels require 5 columns each'
                         assert (l >= 0).all(), 'negative labels'
