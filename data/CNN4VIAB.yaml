@@ -9,4 +9,4 @@ test: ./Tst.txt  # 41 images
 nc: 2
 
 # class names
-names: [ 'correct', 'wrong']
+names: ['correct', 'wrong']
