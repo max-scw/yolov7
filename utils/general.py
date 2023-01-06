@@ -30,10 +30,6 @@ cv2.setNumThreads(0)  # prevent OpenCV from multithreading (incompatible with Py
 os.environ['NUMEXPR_MAX_THREADS'] = str(min(os.cpu_count(), 8))  # NumExpr max threads
 
 
-def print_debug_msg(message: str) -> None:
-    print(colorstr("yellow", "bold", "DEBUGGING: ") + colorstr("yellow", message))
-
-
 def set_logging(rank=-1):
     logging.basicConfig(
         format="%(message)s",

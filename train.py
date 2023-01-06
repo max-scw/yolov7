@@ -28,19 +28,20 @@ from utils.autoanchor import check_anchors
 from utils.datasets import create_dataloader
 from utils.general import labels_to_class_weights, increment_path, labels_to_image_weights, init_seeds, \
     fitness, strip_optimizer, get_latest_run, check_dataset, check_file, check_git_status, check_img_size, \
-    check_requirements, print_mutation, set_logging, one_cycle, colorstr, print_debug_msg
+    check_requirements, print_mutation, set_logging, one_cycle, colorstr
 from utils.google_utils import attempt_download
 from utils.loss import ComputeLoss, ComputeLossOTA
 from utils.plots import plot_images, plot_labels, plot_results, plot_evolution
 from utils.torch_utils import ModelEMA, select_device, intersect_dicts, torch_distributed_zero_first, is_parallel
 # from utils.wandb_logging.wandb_utils import WandbLogger, check_wandb_resume
 
+from utils.debugging import print_debug_msg
+
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning,
                         message="torch.meshgrid: in an upcoming release, it will be required to pass the indexing argument.")
 
 logger = logging.getLogger(__name__)
-
 
 
 def train(hyp, opt, device, tb_writer=None):
@@ -69,8 +70,8 @@ def train(hyp, opt, device, tb_writer=None):
         data_dict = yaml.load(f, Loader=yaml.SafeLoader)  # data dict
     is_coco = opt.data.endswith('coco.yaml')
 
-    # Logging- Doing this before checking the dataset. Might update data_dict
-    loggers = {'wandb': None}  # loggers dict
+    # Logging - Doing this before checking the dataset. Might update data_dict
+    # loggers = {'wandb': None}  # loggers dict
     if rank in [-1, 0]:
         opt.hyp = hyp  # add hyperparameters
         run_id = torch.load(weights, map_location=device).get('wandb_id') if weights.endswith('.pt') and os.path.isfile(weights) else None
@@ -86,10 +87,12 @@ def train(hyp, opt, device, tb_writer=None):
 
     # Model
     pretrained = weights.endswith('.pt')
+    print_debug_msg(f"weights={weights}, pretrained={pretrained}")
     if pretrained:
         with torch_distributed_zero_first(rank):
-            print_debug_msg(f"no local weights found. Attempting to download weights={weights}")
+            print_debug_msg(f"Attempting to download weights={weights}")
             attempt_download(weights)  # download if not found locally
+
         ckpt = torch.load(weights, map_location=device)  # load checkpoint
         model = Model(opt.cfg or ckpt['model'].yaml, ch=3, nc=nc, anchors=hyp.get('anchors')).to(device)  # create
         exclude = ['anchor'] if (opt.cfg or hyp.get('anchors')) and not opt.resume else []  # exclude keys
@@ -99,6 +102,7 @@ def train(hyp, opt, device, tb_writer=None):
         logger.info('Transferred %g/%g items from %s' % (len(state_dict), len(model.state_dict()), weights))  # report
     else:
         model = Model(opt.cfg, ch=3, nc=nc, anchors=hyp.get('anchors')).to(device)  # create
+
     with torch_distributed_zero_first(rank):
         check_dataset(data_dict)  # check
     train_path = data_dict['train']
