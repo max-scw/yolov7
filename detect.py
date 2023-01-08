@@ -170,6 +170,106 @@ def detect(opt):
     print(f'Done. ({time.time() - t0:.3f}s)')
 
 
+class Inference:
+
+    def __init__(self,
+                 weights: Union[str, Path],
+                 imgsz: int = 640,
+                 device_type: str = "cpu",
+                 ) -> None:
+        # Initialize
+        self.device = select_device(device_type)
+        self.half = self.device.type != "cpu"  # half precision only supported on CUDA
+
+        # Load model
+        self.model = attempt_load(weights, map_location=self.device)  # load FP32 model
+        if self.half:
+            self.model.half()  # to FP16
+        self._warmed_up = False
+
+        self.stride = int(self.model.stride.max())  # model stride
+        self.imgsz = check_img_size(imgsz, s=self.stride)  # check img_size
+
+    @property
+    def names(self) -> list:
+        return self.model.module.names if hasattr(self.model, 'module') else self.model.names
+
+    def _prepare_image(self, image: np.ndarray, bgr2rgb: bool) -> np.ndarray:
+        # Padded resize
+        img_pad = letterbox(image, self.imgsz, stride=self.stride)[0]
+        # Convert
+        if bgr2rgb:
+            img_pad = img_pad[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3x416x416
+        img_pad = np.ascontiguousarray(img_pad)
+
+        img = torch.from_numpy(img_pad).to(self.device)
+        img = img.half() if self.half else img.float()  # uint8 to fp16/32
+        img /= 255.0  # 0 - 255 to 0.0 - 1.0
+        if img.ndimension() == 3:
+            img = img.unsqueeze(0)
+        return img
+
+    def _warm_up(self, img: np.ndarray) -> bool:
+        # Run inference
+        if self.device.type != 'cpu':
+            self.model(torch.zeros(1, 3, self.imgsz, self.imgsz).to(self.device).type_as(next(self.model.parameters())))  # run once
+        old_img_w = old_img_h = self.imgsz
+        old_img_b = 1
+
+        t0 = time.time()
+        # Warmup
+        if self.device.type != 'cpu' and (
+                old_img_b != img.shape[0] or old_img_h != img.shape[2] or old_img_w != img.shape[3]):
+            for _ in range(3):
+                self.model(img, augment=True)[0]
+        t1 = time.time()
+        print(f"Warmup took {(1E3 * (t1 - t0)):.1f}ms.")
+        self._warmed_up = True
+        return True
+
+    def predict(self,
+                image: np.ndarray,
+                augment: bool = False,
+                conf_thres: float = 0.25,
+                iou_thres: float = 0.45,
+                agnostic_nms: bool = False,
+                classes_to_filter: int = None,
+                bgr2rgb: bool = False
+                ) -> (torch.Tensor, List[float], List[int]):
+        img = self._prepare_image(image, bgr2rgb=bgr2rgb)
+
+        if not self._warmed_up:
+            self._warm_up(img)
+        # Inference
+        t1 = time_synchronized()
+        with torch.no_grad():  # Calculating gradients would cause a GPU memory leak
+            pred = self.model(img, augment=augment)[0]
+        t2 = time_synchronized()
+
+        # Apply NMS
+        pred = non_max_suppression(pred, conf_thres, iou_thres, classes=classes_to_filter, agnostic=agnostic_nms)
+        t3 = time_synchronized()
+
+        # Process detections
+        det = pred[0]  # there is only one image
+        s = ""
+        if len(det):
+            # Rescale boxes from img_size to im0 size
+            det[:, :4] = scale_coords(img.shape[2:], det[:, :4], image.shape).round()
+
+            # Print results
+            for c in det[:, -1].unique():
+                n = torch.sum(det[:, -1] == c)  # detections per class
+                s += f"{n} {self.names[int(c)]}{'s' * (n > 1)}, "  # add to string
+
+        # Print time (inference + NMS)
+        print(f'{s}Done. ({(1E3 * (t2 - t1)):.1f}ms) Inference, ({(1E3 * (t3 - t2)):.1f}ms) NMS')
+        xyxy = det[..., :4]
+        scores = det[..., 4].tolist()
+        classes = det[..., 5].int().tolist()
+        return xyxy, scores, classes
+
+
 def predict(weights: Union[str, Path],
             image: np.ndarray,
             imgsz: int = 640,
@@ -197,12 +297,6 @@ def predict(weights: Union[str, Path],
 
     if half:
         model.half()  # to FP16
-
-    # Second-stage classifier
-    classify = False
-    if classify:
-        modelc = load_classifier(name='resnet101', n=2)  # initialize
-        modelc.load_state_dict(torch.load('weights/resnet101.pt', map_location=device)['model']).to(device).eval()
 
     # Set Dataloader
     # dataset = LoadImages(source, img_size=imgsz, stride=stride)
@@ -248,10 +342,6 @@ def predict(weights: Union[str, Path],
     # Apply NMS
     pred = non_max_suppression(pred, conf_thres, iou_thres, classes=classes_to_filter, agnostic=agnostic_nms)
     t3 = time_synchronized()
-
-    # Apply Classifier
-    if classify:
-        pred = apply_classifier(pred, modelc, img, image)
 
     # Process detections
     s = ""
@@ -318,4 +408,10 @@ if __name__ == '__main__':
     # Convert
     img = img[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3x416x416
     img = np.ascontiguousarray(img)
-    predict(weights=r"best.pt", image=img, imgsz=img_size)
+    predict(weights=r"C:\Users\schwmax\Downloads\yolov7-tiny-best.pt", image=img, imgsz=img_size)
+
+    print("____class____")
+    mdl = Inference(weights=r"C:\Users\schwmax\Downloads\yolov7-tiny-best.pt",
+                    imgsz=img_size)
+    for i in range(3):
+        mdl.predict(image_cv, conf_thres=0.8, bgr2rgb=True)
