@@ -171,11 +171,11 @@ def detect(opt):
 
 
 class Inference:
-
     def __init__(self,
                  weights: Union[str, Path],
                  imgsz: int = 640,
                  device_type: str = "cpu",
+                 colors: List[List] = None
                  ) -> None:
         # Initialize
         self.device = select_device(device_type)
@@ -190,16 +190,23 @@ class Inference:
         self.stride = int(self.model.stride.max())  # model stride
         self.imgsz = check_img_size(imgsz, s=self.stride)  # check img_size
 
+        self.__colors = colors
+
     @property
     def names(self) -> list:
         return self.model.module.names if hasattr(self.model, 'module') else self.model.names
 
-    def _prepare_image(self, image: np.ndarray, bgr2rgb: bool) -> np.ndarray:
+    @property
+    def colors(self) -> list:
+        if self.__colors is None:
+            self.__colors = [[random.randint(0, 255) for _ in range(3)] for _ in self.names]
+        return self.__colors
+
+    def _prepare_image(self, image: np.ndarray) -> np.ndarray:
         # Padded resize
         img_pad = letterbox(image, self.imgsz, stride=self.stride)[0]
         # Convert
-        if bgr2rgb:
-            img_pad = img_pad[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3x416x416
+        img_pad = img_pad[:, :, ::-1].transpose(2, 0, 1)  # bring color channels to front # BGR2RGB
         img_pad = np.ascontiguousarray(img_pad)
 
         img = torch.from_numpy(img_pad).to(self.device)
@@ -234,9 +241,8 @@ class Inference:
                 iou_thres: float = 0.45,
                 agnostic_nms: bool = False,
                 classes_to_filter: int = None,
-                bgr2rgb: bool = False
                 ) -> (torch.Tensor, List[float], List[int]):
-        img = self._prepare_image(image, bgr2rgb=bgr2rgb)
+        img = self._prepare_image(image)
 
         if not self._warmed_up:
             self._warm_up(img)
@@ -264,10 +270,31 @@ class Inference:
 
         # Print time (inference + NMS)
         print(f'{s}Done. ({(1E3 * (t2 - t1)):.1f}ms) Inference, ({(1E3 * (t3 - t2)):.1f}ms) NMS')
-        xyxy = det[..., :4]
+        xyxy = det[..., :4].int().tolist()
         scores = det[..., 4].tolist()
         classes = det[..., 5].int().tolist()
         return xyxy, scores, classes
+
+    def plot_box(self,
+                 image: np.ndarray,
+                 bbox: Union[torch.Tensor, np.ndarray],
+                 scores: List[float],
+                 classes: List[int],
+                 line_thickness: int = 2,
+                 show_img: bool = False,
+                 bgr2rgb: bool = False
+                 ) -> bool:
+        for xyxy, conf, cls in zip(bbox, scores, classes):
+            label = f'{self.names[int(cls)]} {conf:.2f}'
+            color = self.colors[int(cls)]
+            if bgr2rgb:
+                color = [color[2], color[1], color[0]]
+            plot_one_box(xyxy, image, label=label, color=color, line_thickness=line_thickness)
+
+        if show_img:
+            cv2.imshow("YOLOv7 Inference", image)
+            cv2.waitKey(2)  # 1 millisecond
+        return True
 
 
 def predict(weights: Union[str, Path],
@@ -298,14 +325,6 @@ def predict(weights: Union[str, Path],
     if half:
         model.half()  # to FP16
 
-    # Set Dataloader
-    # dataset = LoadImages(source, img_size=imgsz, stride=stride)
-    # # Padded resize
-    # img = letterbox(img0, self.img_size, stride=self.stride)[0]
-    # # Convert
-    # img = img[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3x416x416
-    # img = np.ascontiguousarray(img)
-
     # Get names and colors
     names = model.module.names if hasattr(model, 'module') else model.names
     if colors is None:
@@ -327,9 +346,6 @@ def predict(weights: Union[str, Path],
 
     # Warmup
     if device.type != 'cpu' and (old_img_b != img.shape[0] or old_img_h != img.shape[2] or old_img_w != img.shape[3]):
-        old_img_b = img.shape[0]
-        old_img_h = img.shape[2]
-        old_img_w = img.shape[3]
         for i in range(3):
             model(img, augment=augment)[0]
 
@@ -403,15 +419,18 @@ if __name__ == '__main__':
     stride = 32
     image_cv = cv2.imread("dataset/Tst/220808_154403_0000000008_CAM1_NORMAL_NG.bmp", cv2.IMREAD_COLOR)
 
-    # Padded resize
-    img = letterbox(image_cv, img_size, stride=stride)[0]
-    # Convert
-    img = img[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3x416x416
-    img = np.ascontiguousarray(img)
-    predict(weights=r"C:\Users\schwmax\Downloads\yolov7-tiny-best.pt", image=img, imgsz=img_size)
+    # # Padded resize
+    # img = letterbox(image_cv, img_size, stride=stride)[0]
+    # # Convert
+    # img = img[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3x416x416
+    # img = np.ascontiguousarray(img)
+    # predict(weights=r"best.pt", image=img, imgsz=img_size)
 
     print("____class____")
-    mdl = Inference(weights=r"C:\Users\schwmax\Downloads\yolov7-tiny-best.pt",
-                    imgsz=img_size)
+    mdl = Inference(weights=r"iny-best.pt",
+                    imgsz=img_size,
+                    colors=[[45, 66, 117], [40, 185, 218]]
+                    )
     for i in range(3):
-        mdl.predict(image_cv, conf_thres=0.8, bgr2rgb=True)
+        x = mdl.predict(image_cv, conf_thres=0.8)
+        mdl.plot_box(image_cv.copy(), *x, show_img=True, bgr2rgb=True)
