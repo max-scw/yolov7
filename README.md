@@ -13,26 +13,26 @@ pip install -r requirements.txt
 
 ## Usage
 
-````shell
-python train.py --device 'cpu' --batch-size 16 --data data/CNN4VIAB.yaml --img 640 640 --cfg cfg/training/yolov7-CNN4VIAB.yaml --weights 'yolov7_training.pt' --name yolov7-CNN4VIAB --hyp data/hyp.scratch.custom.yaml --epochs 300 --adam
-````
-
-
-## Training
-
+### Training
 * Download MS COCO dataset images ([train](http://images.cocodataset.org/zips/train2017.zip), [val](http://images.cocodataset.org/zips/val2017.zip), [test](http://images.cocodataset.org/zips/test2017.zip)) and [labels](https://github.com/WongKinYiu/yolov7/releases/download/v0.1/coco2017labels-segments.zip). If you have previously used a different version of YOLO, we strongly recommend that you delete `train2017.cache` and `val2017.cache` files, and redownload [labels](https://github.com/WongKinYiu/yolov7/releases/download/v0.1/coco2017labels-segments.zip) 
 
+````shell
+python train.py --device 'cpu' --batch-size 32 --data data/CNN4VIAB.yaml --img 640 640 --cfg cfg/training/yolov7-CNN4VIAB.yaml --weights 'yolov7_training.pt' --name yolov7-CNN4VIAB --hyp data/hyp.scratch.custom.yaml --epochs 300 --adam --workers 4
+````
+
+#### Transfer learning
+ Download weights from the original publication:
+* [`yolov7_training.pt`](https://github.com/WongKinYiu/yolov7/releases/download/v0.1/yolov7_training.pt) 
+* [`yolov7x_training.pt`](https://github.com/WongKinYiu/yolov7/releases/download/v0.1/yolov7x_training.pt) 
+* [`yolov7-w6_training.pt`](https://github.com/WongKinYiu/yolov7/releases/download/v0.1/yolov7-w6_training.pt) 
+* [`yolov7-e6_training.pt`](https://github.com/WongKinYiu/yolov7/releases/download/v0.1/yolov7-e6_training.pt)
+* [`yolov7-d6_training.pt`](https://github.com/WongKinYiu/yolov7/releases/download/v0.1/yolov7-d6_training.pt) 
+* [`yolov7-e6e_training.pt`](https://github.com/WongKinYiu/yolov7/releases/download/v0.1/yolov7-e6e_training.pt)
 
 
-## Transfer learning
-
-[`yolov7_training.pt`](https://github.com/WongKinYiu/yolov7/releases/download/v0.1/yolov7_training.pt) [`yolov7x_training.pt`](https://github.com/WongKinYiu/yolov7/releases/download/v0.1/yolov7x_training.pt) [`yolov7-w6_training.pt`](https://github.com/WongKinYiu/yolov7/releases/download/v0.1/yolov7-w6_training.pt) [`yolov7-e6_training.pt`](https://github.com/WongKinYiu/yolov7/releases/download/v0.1/yolov7-e6_training.pt) [`yolov7-d6_training.pt`](https://github.com/WongKinYiu/yolov7/releases/download/v0.1/yolov7-d6_training.pt) [`yolov7-e6e_training.pt`](https://github.com/WongKinYiu/yolov7/releases/download/v0.1/yolov7-e6e_training.pt)
 
 
-
-
-
-## Inference
+### Inference / Detection / Testing
 
 On video:
 ``` shell
@@ -43,6 +43,15 @@ On image:
 ``` shell
 python detect.py --weights best.pt --conf 0.25 --img-size 640 --source <path to image>
 ```
+
+
+python detect.py --weights runs/train/yolov7-CNN4VIAB/best.pt --conf 0.25 --img-size 640 --source dataset/Tst
+
+Testing
+````shell
+python test.py --weights best.pt --data ".\data\coco.yaml" --task test
+````
+
 
 ## Acknowledgements
 
