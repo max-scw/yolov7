@@ -315,6 +315,7 @@ class BatchNormXd(torch.nn.modules.batchnorm._BatchNorm):
         #  we could return the one that was originally created)
         return
 
+
 def revert_sync_batchnorm(module):
     # this is very similar to the function that it is trying to revert:
     # https://github.com/pytorch/pytorch/blob/c8b3686a3e4ba63dc59e5dcfe5db3430df256833/torch/nn/modules/batchnorm.py#L679

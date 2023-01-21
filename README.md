@@ -19,6 +19,9 @@ pip install -r requirements.txt
 ````shell
 python train.py --device 'cpu' --batch-size 32 --data data/CNN4VIAB.yaml --img 640 640 --cfg cfg/training/yolov7-CNN4VIAB.yaml --weights 'yolov7_training.pt' --name yolov7-CNN4VIAB --hyp data/hyp.scratch.custom.yaml --epochs 300 --adam --workers 4
 ````
+Annotation: Every image has its own corresponding label file formatted as followed:
+`<target id> <x-center> <y-center> <width> <height>` relative, i.e. [0, 1]
+
 
 #### Transfer learning
  Download weights from the original publication:
