@@ -1234,13 +1234,38 @@ class Albumentations:
         import albumentations as A
 
         self.transform = A.Compose([
-            A.CLAHE(p=0.01),
-            A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=0.01),
-            A.RandomGamma(gamma_limit=[80, 120], p=0.01),
-            A.Blur(p=0.01),
-            A.MedianBlur(p=0.01),
-            A.ToGray(p=0.01),
-            A.ImageCompression(quality_lower=75, p=0.01), ],
+            # A.CLAHE(p=0.01),
+            # A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=0.01),
+            # A.RandomGamma(gamma_limit=[80, 120], p=0.01),
+            # A.Blur(p=0.01),
+            # A.MedianBlur(p=0.01),
+            # A.ToGray(p=0.01),
+            # A.ImageCompression(quality_lower=75, p=0.01),
+            # --------- MY OWN COLLECTION
+            A.GaussNoise(var_limit=(10, 50), p=0.5),
+            A.ISONoise(p=0.5),  # camera sensor noise
+            # --- filter
+            A.Sharpen(alpha=(0.2, 0.5), lightness=(0.5, 1.0), p=0.5),
+            A.Blur(blur_limit=5, p=0.5),
+            # --- brightness / pixel-values
+            A.RandomBrightnessContrast(brightness_limit=0.25, contrast_limit=0.25, p=0.8),
+            A.RandomGamma(gamma_limit=(80, 120), p=0.3),
+            A.RandomToneCurve(scale=0.1, p=0.4),
+            # A.CLAHE(p=0.2),  # Contrast Limited Adaptive Histogram Equalization
+            # A.RGBShift(p=0.1),
+            # --- geometry
+            # A.RandomSizedCrop((512 - 100, 512 + 100), 512, 512),
+            # A.CenterCrop(width=450, height=450)
+            A.HorizontalFlip(p=0.5),
+            A.VerticalFlip(p=0.5),
+            A.ShiftScaleRotate(shift_limit=0.05, scale_limit=0.1, rotate_limit=45, p=0.5),
+            # trafo_fncs.append(A.RandomRotate90(p=0.5))   # does not keep aspect ratio!
+            A.BBoxSafeRandomCrop(erosion_rate=0.01, p=0.5),
+            # --- compression
+            A.ImageCompression(quality_lower=95, quality_upper=100,
+                                                 compression_type=A.ImageCompression.ImageCompressionType.JPEG, p=0.5),
+            A.PixelDropout(dropout_prob=0.05, p=0.5),
+        ],
             bbox_params=A.BboxParams(format='pascal_voc', label_fields=['class_labels']))
 
         # logging.info(colorstr('albumentations: ') + ', '.join(f'{x}' for x in self.transform.transforms if x.p))
