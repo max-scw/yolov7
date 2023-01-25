@@ -20,14 +20,23 @@ from PIL import Image, ExifTags
 from torch.utils.data import Dataset
 from tqdm import tqdm
 
-import pickle
-from copy import deepcopy
-# from pycocotools import mask as maskUtils
-from torchvision.utils import save_image
-from torchvision.ops import roi_pool, roi_align, ps_roi_pool, ps_roi_align
+# import pickle
+# from copy import deepcopy
+# # from pycocotools import mask as maskUtils
+# from torchvision.utils import save_image
+# from torchvision.ops import roi_pool, roi_align, ps_roi_pool, ps_roi_align
 
-from utils.general import check_requirements, xyxy2xywh, xywh2xyxy, xywhn2xyxy, xyn2xy, segment2box, segments2boxes, \
-    resample_segments, clean_str
+from utils.general import (check_requirements,
+                           xyxy2xywh,
+                           xywh2xyxy,
+                           xywhn2xyxy,
+                           xyn2xy,
+                           segment2box,
+                           segments2boxes,
+                           resample_segments,
+                           clean_str,
+                           colorstr
+                           )
 from utils.torch_utils import torch_distributed_zero_first
 from utils.debugging import print_debug_msg
 
@@ -64,7 +73,9 @@ def exif_size(img):
 
 
 def create_dataloader(path, imgsz, batch_size, stride, opt, hyp=None, augment=False, cache=False, pad=0.0, rect=False,
-                      rank=-1, world_size=1, workers=8, image_weights=False, quad=False, prefix=''):
+                      rank=-1, world_size=1, workers=8, image_weights=False, quad=False, prefix='',
+                      yolov5_augmentation:bool = True, augmentation_probability: float = 0.01
+                      ):
     # Make sure only the first process in DDP process the dataset first, and the following others can use the cache
     print_debug_msg(f"LoadImagesAndLabels, path: {path}")
     with torch_distributed_zero_first(rank):
@@ -77,7 +88,10 @@ def create_dataloader(path, imgsz, batch_size, stride, opt, hyp=None, augment=Fa
                                       stride=int(stride),
                                       pad=pad,
                                       image_weights=image_weights,
-                                      prefix=prefix)
+                                      prefix=prefix,
+                                      yolov5_augmentation=yolov5_augmentation,
+                                      augmentation_probability=augmentation_probability
+                                      )
     print_debug_msg(f"LoadImagesAndLabels... done")
     batch_size = min(batch_size, len(dataset))
     nw = min([os.cpu_count() // world_size, batch_size if batch_size > 1 else 0, workers])  # number of workers
@@ -353,8 +367,21 @@ def img2label_paths(img_paths):
 
 
 class LoadImagesAndLabels(Dataset):  # for training/testing
-    def __init__(self, path, img_size=640, batch_size=16, augment=False, hyp=None, rect=False, image_weights=False,
-                 cache_images=False, single_cls=False, stride=32, pad=0.0, prefix=''):
+    def __init__(self, path,
+                 img_size: int = 640,
+                 batch_size: int = 16,
+                 augment: bool = False,
+                 hyp=None,
+                 rect: bool = False,
+                 image_weights: bool = False,
+                 cache_images: bool = False,
+                 single_cls: bool = False,
+                 stride: int = 32,
+                 pad: float = 0.0,
+                 prefix: str = '',
+                 yolov5_augmentation: bool = True,
+                 augmentation_probability: float = 0.3
+                 ):
         self.img_size = img_size
         self.augment = augment
         self.hyp = hyp
@@ -364,7 +391,15 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         self.mosaic_border = [-img_size // 2, -img_size // 2]
         self.stride = stride
         self.path = path
-        # self.albumentations = Albumentations() if augment else None
+        # try:
+        if augment:
+            self.albumentations = Albumentations(augment_ogl=yolov5_augmentation,
+                                                     augmentation_probability=augmentation_probability)
+        else:
+            self.albumentations = None
+        # except:
+        #     self.albumentations = None
+        #     print_debug_msg(f"Python package 'albumentations' not found")
 
         try:
             f = []  # image files
@@ -585,8 +620,8 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                                                  scale=hyp['scale'],
                                                  shear=hyp['shear'],
                                                  perspective=hyp['perspective'])
-
-            # img, labels = self.albumentations(img, labels)
+            if self.albumentations is not None:
+                img, labels = self.albumentations(img, labels)
 
             # Augment colorspace
             augment_hsv(img, hgain=hyp['hsv_h'], sgain=hyp['hsv_s'], vgain=hyp['hsv_v'])
@@ -1229,46 +1264,55 @@ def pastein(image, labels, sample_labels, sample_images, sample_masks):
 
 class Albumentations:
     # YOLOv5 Albumentations class (optional, only used if package is installed)
-    def __init__(self):
+    def __init__(self, augment_ogl: bool = True, augmentation_probability: float = 0.3):
         self.transform = None
         import albumentations as A
 
-        self.transform = A.Compose([
-            # A.CLAHE(p=0.01),
-            # A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=0.01),
-            # A.RandomGamma(gamma_limit=[80, 120], p=0.01),
-            # A.Blur(p=0.01),
-            # A.MedianBlur(p=0.01),
-            # A.ToGray(p=0.01),
-            # A.ImageCompression(quality_lower=75, p=0.01),
+        probability = 0.01 if augment_ogl else augmentation_probability
+        trafo_fncs = []
+        if augment_ogl:
+            trafo_fncs.append(A.CLAHE(p=probability))
+            trafo_fncs.append(A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=probability))
+            trafo_fncs.append(A.RandomGamma(gamma_limit=[80, 120], p=probability))
+            trafo_fncs.append(A.Blur(p=probability))
+            trafo_fncs.append(A.MedianBlur(p=probability))
+            trafo_fncs.append(A.ToGray(p=probability))
+            trafo_fncs.append(A.ImageCompression(quality_lower=75, p=probability))
+        else:
             # --------- MY OWN COLLECTION
-            A.GaussNoise(var_limit=(10, 50), p=0.5),
-            A.ISONoise(p=0.5),  # camera sensor noise
+            trafo_fncs.append(A.GaussNoise(var_limit=(10, 50), p=probability))
+            trafo_fncs.append(A.ISONoise(p=probability))  # camera sensor noise
             # --- filter
-            A.Sharpen(alpha=(0.2, 0.5), lightness=(0.5, 1.0), p=0.5),
-            A.Blur(blur_limit=5, p=0.5),
+            trafo_fncs.append(A.Sharpen(alpha=(0.2, 0.5), lightness=(0.5, 1.0), p=probability))
+            trafo_fncs.append(A.Blur(blur_limit=5, p=probability))
+            trafo_fncs.append(A.MedianBlur(p=probability))
             # --- brightness / pixel-values
-            A.RandomBrightnessContrast(brightness_limit=0.25, contrast_limit=0.25, p=0.8),
-            A.RandomGamma(gamma_limit=(80, 120), p=0.3),
-            A.RandomToneCurve(scale=0.1, p=0.4),
+            trafo_fncs.append(A.CLAHE(p=probability))
+            trafo_fncs.append(A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=probability))
+            trafo_fncs.append(A.RandomGamma(gamma_limit=(80, 120), p=probability / 2))
+            trafo_fncs.append(A.RandomToneCurve(scale=0.1, p=probability / 2))
+
             # A.CLAHE(p=0.2),  # Contrast Limited Adaptive Histogram Equalization
             # A.RGBShift(p=0.1),
             # --- geometry
             # A.RandomSizedCrop((512 - 100, 512 + 100), 512, 512),
             # A.CenterCrop(width=450, height=450)
-            A.HorizontalFlip(p=0.5),
-            A.VerticalFlip(p=0.5),
-            A.ShiftScaleRotate(shift_limit=0.05, scale_limit=0.1, rotate_limit=45, p=0.5),
-            # trafo_fncs.append(A.RandomRotate90(p=0.5))   # does not keep aspect ratio!
-            A.BBoxSafeRandomCrop(erosion_rate=0.01, p=0.5),
+            trafo_fncs.append(A.HorizontalFlip(p=probability))
+            trafo_fncs.append(A.VerticalFlip(p=probability))
+            trafo_fncs.append(A.ShiftScaleRotate(shift_limit=0.05, scale_limit=0.1, rotate_limit=45, p=probability))
+            # trafo_fncs.append(A.RandomRotate90(p=0.5))  # FIXME: does not keep aspect ratio
+            # trafo_fncs.append(A.BBoxSafeRandomCrop(erosion_rate=0.01, p=probability))  # FIXME: does not keep aspect ratio
             # --- compression
-            A.ImageCompression(quality_lower=95, quality_upper=100,
-                                                 compression_type=A.ImageCompression.ImageCompressionType.JPEG, p=0.5),
-            A.PixelDropout(dropout_prob=0.05, p=0.5),
-        ],
-            bbox_params=A.BboxParams(format='pascal_voc', label_fields=['class_labels']))
+            trafo_fncs.append(A.ImageCompression(quality_lower=95, quality_upper=100,
+                                                 compression_type=A.ImageCompression.ImageCompressionType.JPEG,
+                                                 p=probability / 5))
+            trafo_fncs.append(A.PixelDropout(dropout_prob=0.05, p=probability))
+            # trafo_fncs.append(A.Resize(always_apply=True))
+        print_debug_msg(f"albumentations: {trafo_fncs}")
+        self.transform = A.Compose(trafo_fncs,
+                                   bbox_params=A.BboxParams(format='pascal_voc', label_fields=['class_labels']))
 
-        # logging.info(colorstr('albumentations: ') + ', '.join(f'{x}' for x in self.transform.transforms if x.p))
+        logging.info(colorstr('albumentations: ') + ', '.join(f'{x}' for x in self.transform.transforms if x.p))
 
     def __call__(self, im, labels, p=1.0):
         if self.transform and random.random() < p:
