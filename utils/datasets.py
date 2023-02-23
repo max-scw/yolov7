@@ -394,12 +394,9 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         # try:
         if augment:
             self.albumentations = Albumentations(augment_ogl=yolov5_augmentation,
-                                                     augmentation_probability=augmentation_probability)
+                                                 augmentation_probability=augmentation_probability)
         else:
             self.albumentations = None
-        # except:
-        #     self.albumentations = None
-        #     print_debug_msg(f"Python package 'albumentations' not found")
 
         try:
             f = []  # image files
@@ -1280,34 +1277,31 @@ class Albumentations:
             trafo_fncs.append(A.ImageCompression(quality_lower=75, p=probability))
         else:
             # --------- MY OWN COLLECTION
-            trafo_fncs.append(A.GaussNoise(var_limit=(10, 50), p=probability))
             trafo_fncs.append(A.ISONoise(p=probability))  # camera sensor noise
+            trafo_fncs.append(A.GaussNoise(var_limit=(10, 50), p=probability))  # mimics out of focus
             # --- filter
             trafo_fncs.append(A.Sharpen(alpha=(0.2, 0.5), lightness=(0.5, 1.0), p=probability))
             trafo_fncs.append(A.Blur(blur_limit=5, p=probability))
             trafo_fncs.append(A.MedianBlur(p=probability))
+            # --- brightness: artificial shadow
+            # trafo_fncs.append(A.RandomShadow(p=probability) / 2)  # TODO: test
             # --- brightness / pixel-values
-            trafo_fncs.append(A.CLAHE(p=probability))
+            trafo_fncs.append(A.CLAHE(p=probability))  # Contrast Limited Adaptive Histogram Equalization
             trafo_fncs.append(A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=probability))
             trafo_fncs.append(A.RandomGamma(gamma_limit=(80, 120), p=probability / 2))
             trafo_fncs.append(A.RandomToneCurve(scale=0.1, p=probability / 2))
-
-            # A.CLAHE(p=0.2),  # Contrast Limited Adaptive Histogram Equalization
-            # A.RGBShift(p=0.1),
             # --- geometry
-            # A.RandomSizedCrop((512 - 100, 512 + 100), 512, 512),
-            # A.CenterCrop(width=450, height=450)
             trafo_fncs.append(A.HorizontalFlip(p=probability))
             trafo_fncs.append(A.VerticalFlip(p=probability))
             trafo_fncs.append(A.ShiftScaleRotate(shift_limit=0.05, scale_limit=0.1, rotate_limit=45, p=probability))
-            # trafo_fncs.append(A.RandomRotate90(p=0.5))  # FIXME: does not keep aspect ratio
-            # trafo_fncs.append(A.BBoxSafeRandomCrop(erosion_rate=0.01, p=probability))  # FIXME: does not keep aspect ratio
             # --- compression
-            trafo_fncs.append(A.ImageCompression(quality_lower=95, quality_upper=100,
+            trafo_fncs.append(A.ImageCompression(quality_lower=75, quality_upper=100,
                                                  compression_type=A.ImageCompression.ImageCompressionType.JPEG,
                                                  p=probability / 5))
+
+            trafo_fncs.append(A.MultiplicativeNoise(multiplier=(0.9, 1.1), p=probability / 2))
             trafo_fncs.append(A.PixelDropout(dropout_prob=0.05, p=probability))
-            # trafo_fncs.append(A.Resize(always_apply=True))
+
         print_debug_msg(f"albumentations: {trafo_fncs}")
         self.transform = A.Compose(trafo_fncs,
                                    bbox_params=A.BboxParams(format='pascal_voc', label_fields=['class_labels']))

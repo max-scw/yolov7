@@ -112,16 +112,16 @@ class TRT_NMS(torch.autograd.Function):
     '''TensorRT NMS operation'''
     @staticmethod
     def forward(
-        ctx,
-        boxes,
-        scores,
-        background_class=-1,
-        box_coding=1,
-        iou_threshold=0.45,
-        max_output_boxes=100,
-        plugin_version="1",
-        score_activation=0,
-        score_threshold=0.25,
+            ctx,
+            boxes,
+            scores,
+            background_class=-1,
+            box_coding=1,
+            iou_threshold=0.45,
+            max_output_boxes=100,
+            plugin_version="1",
+            score_activation=0,
+            score_threshold=0.25,
     ):
         batch_size, num_boxes, num_classes = scores.shape
         num_det = torch.randint(0, max_output_boxes, (batch_size, 1), dtype=torch.int32)
@@ -141,6 +141,9 @@ class TRT_NMS(torch.autograd.Function):
                  plugin_version="1",
                  score_activation=0,
                  score_threshold=0.25):
+        #  FutureWarning: 'torch.onnx._patch_torch._graph_op' is deprecated in version 1.13 and will be removed in
+        #  version 1.14. Please note 'g.op()' is to be removed from torch.Graph. Please open a GitHub issue if you
+        #  need this functionality..
         out = g.op("TRT::EfficientNMS_TRT",
                    boxes,
                    scores,
@@ -168,7 +171,7 @@ class ONNX_ORT(nn.Module):
         self.convert_matrix = torch.tensor([[1, 0, 1, 0], [0, 1, 0, 1], [-0.5, 0, 0.5, 0], [0, -0.5, 0, 0.5]],
                                            dtype=torch.float32,
                                            device=self.device)
-        self.n_classes=n_classes
+        self.n_classes = n_classes
 
     def forward(self, x):
         boxes = x[:, :, :4]

@@ -343,7 +343,7 @@ def revert_sync_batchnorm(module):
 
 class TracedModel(nn.Module):
 
-    def __init__(self, model=None, device=None, img_size=(640,640)): 
+    def __init__(self, model=None, device=None, img_size=(640, 640)):
         super(TracedModel, self).__init__()
         
         print(" Convert model to Traced-model... ") 
@@ -357,8 +357,11 @@ class TracedModel(nn.Module):
 
         self.detect_layer = self.model.model[-1]
         self.model.traced = True
+
+        if isinstance(img_size, int):
+            img_size = (img_size, img_size)
         
-        rand_example = torch.rand(1, 3, img_size, img_size)
+        rand_example = torch.rand(1, 3, img_size[0], img_size[1])
         
         traced_script_module = torch.jit.trace(self.model, rand_example, strict=False)
         #traced_script_module = torch.jit.script(self.model)
