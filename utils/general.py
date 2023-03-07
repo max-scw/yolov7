@@ -30,9 +30,19 @@ cv2.setNumThreads(0)  # prevent OpenCV from multithreading (incompatible with Py
 os.environ['NUMEXPR_MAX_THREADS'] = str(min(os.cpu_count(), 8))  # NumExpr max threads
 
 
-def set_logging(rank=-1):
+def set_logging(rank=-1, filename: str = None):
+    if filename:
+        kwargs = {
+            "filename": filename,
+            "filemode": "a",
+            "format": "%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s",
+            "datefmt": "%H:%M:%S"
+        }
+    else:
+        kwargs = {"format": "%(message)s"}
+
     logging.basicConfig(
-        format="%(message)s",
+        **kwargs,
         level=logging.INFO if rank in [-1, 0] else logging.WARN)
 
 
@@ -709,7 +719,7 @@ def non_max_suppression_kpt(prediction, conf_thres=0.25, iou_thres=0.45, classes
          list of detections, on (n,6) tensor per image [xyxy, conf, cls]
     """
     if nc is None:
-        nc = prediction.shape[2] - 5  if not kpt_label else prediction.shape[2] - 56 # number of classes
+        nc = prediction.shape[2] - 5 if not kpt_label else prediction.shape[2] - 56 # number of classes
     xc = prediction[..., 4] > conf_thres  # candidates
 
     # Settings
