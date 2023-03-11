@@ -590,12 +590,12 @@ if __name__ == '__main__':
                         help="Probability to apply data augmentation based on the albumentations package.")
 
     opt = parser.parse_args()
-    opt.data = "data/CNN4VIAB.yaml"  # FIXME: delete
-    opt.cfg = "cfg/training/yolov7-CNN4VIAB.yaml"  # FIXME: delete
-    opt.weights = "trained_models/yolov7-tiny.pt"  # FIXME: delete
-    opt.albumentations_probability = 0.3  # FIXME: delete
-    opt.epochs = 2
-    opt.name = "TEST"
+    # opt.data = "data/CNN4VIAB.yaml"  # FIXME: delete
+    # opt.cfg = "cfg/training/yolov7-CNN4VIAB.yaml"  # FIXME: delete
+    # opt.weights = "trained_models/yolov7-tiny.pt"  # FIXME: delete
+    # opt.albumentations_probability = 0.3  # FIXME: delete
+    # opt.epochs = 2
+    # opt.name = "TEST"
     print_debug_msg(f"parser opt={opt}")
 
     # Set DDP variables
