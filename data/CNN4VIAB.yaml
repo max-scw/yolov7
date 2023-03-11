@@ -6,7 +6,7 @@ val: ./Val.txt  # 15 images
 test: ./Tst.txt  # 41 images
 
 # number of classes
-nc: 2
+nc: 4
 
 # class names
-names: ['wrong', 'correct']
+names: ['A0 - Correct', 'B1 - Wrong', 'C2 - Wrong', 'D3 - Wrong']
