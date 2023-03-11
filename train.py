@@ -278,11 +278,8 @@ def train(hyp, opt, device, tb_writer=None):
                                        pad=0.5, prefix=colorstr('val: '))[0]
 
         if not opt.resume:
-            print_debug_msg(f"dataset.labels={dataset.labels}")
             labels = np.concatenate(dataset.labels, 0)
-            print_debug_msg(f"labels[:, 0]={labels[:, 0]}")
             c = torch.tensor(labels[:, 0])  # classes
-            print_debug_msg(f"c={c}")
             # cf = torch.bincount(c.long(), minlength=nc) + 1.  # frequency
             # model._initialize_biases(cf.to(device))
             if plots:
@@ -593,13 +590,18 @@ if __name__ == '__main__':
                         help="Probability to apply data augmentation based on the albumentations package.")
 
     opt = parser.parse_args()
-
+    opt.data = "data/CNN4VIAB.yaml"  # FIXME: delete
+    opt.cfg = "cfg/training/yolov7-CNN4VIAB.yaml"  # FIXME: delete
+    opt.weights = "trained_models/yolov7-tiny.pt"  # FIXME: delete
+    opt.albumentations_probability = 0.3  # FIXME: delete
+    opt.epochs = 2
+    opt.name = "TEST"
     print_debug_msg(f"parser opt={opt}")
 
     # Set DDP variables
     opt.world_size = int(os.environ['WORLD_SIZE']) if 'WORLD_SIZE' in os.environ else 1
     opt.global_rank = int(os.environ['RANK']) if 'RANK' in os.environ else -1
-    set_logging(opt.global_rank, Path(opt.project) / opt.name / "train.log")
+    set_logging(opt.global_rank)
     #if opt.global_rank in [-1, 0]:
     #    check_git_status()
     #    check_requirements()

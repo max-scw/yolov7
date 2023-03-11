@@ -1270,11 +1270,11 @@ class Albumentations:
         if augment_ogl:
             trafo_fncs.append(A.CLAHE(p=probability))
             trafo_fncs.append(A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=probability))
-            trafo_fncs.append(A.RandomGamma(gamma_limit=[80, 120], p=probability))
+            trafo_fncs.append(A.RandomGamma(gamma_limit=(80, 120), p=probability))
             trafo_fncs.append(A.Blur(p=probability))
             trafo_fncs.append(A.MedianBlur(p=probability))
             trafo_fncs.append(A.ToGray(p=probability))
-            trafo_fncs.append(A.ImageCompression(quality_lower=75, p=probability))
+            trafo_fncs.append(A.ImageCompression(quality_lower=75, p=probability))  # this is harsh!
         else:
             # --------- MY OWN COLLECTION
             trafo_fncs.append(A.ISONoise(p=probability))  # camera sensor noise

@@ -18,6 +18,8 @@ import torch
 import torchvision
 import yaml
 
+from typing import Union
+
 from utils.google_utils import gsutil_getsize
 from utils.metrics import fitness
 from utils.torch_utils import init_torch_seeds
@@ -30,7 +32,7 @@ cv2.setNumThreads(0)  # prevent OpenCV from multithreading (incompatible with Py
 os.environ['NUMEXPR_MAX_THREADS'] = str(min(os.cpu_count(), 8))  # NumExpr max threads
 
 
-def set_logging(rank=-1, filename: str = None):
+def set_logging(rank=-1, filename: Union[str, pl.Path] = None):
     if filename:
         kwargs = {
             "filename": filename,
