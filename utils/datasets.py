@@ -20,12 +20,6 @@ from PIL import Image, ExifTags
 from torch.utils.data import Dataset
 from tqdm import tqdm
 
-# import pickle
-# from copy import deepcopy
-# # from pycocotools import mask as maskUtils
-# from torchvision.utils import save_image
-# from torchvision.ops import roi_pool, roi_align, ps_roi_pool, ps_roi_align
-
 from utils.general import (check_requirements,
                            xyxy2xywh,
                            xywh2xyxy,
@@ -74,7 +68,7 @@ def exif_size(img):
 
 def create_dataloader(path, imgsz, batch_size, stride, opt, hyp=None, augment=False, cache=False, pad=0.0, rect=False,
                       rank=-1, world_size=1, workers=8, image_weights=False, quad=False, prefix='',
-                      yolov5_augmentation:bool = True, augmentation_probability: float = 0.01
+                      yolov5_augmentation: bool = True, augmentation_probability: float = 0.01
                       ):
     # Make sure only the first process in DDP process the dataset first, and the following others can use the cache
     print_debug_msg(f"LoadImagesAndLabels, path: {path}")
@@ -92,7 +86,6 @@ def create_dataloader(path, imgsz, batch_size, stride, opt, hyp=None, augment=Fa
                                       yolov5_augmentation=yolov5_augmentation,
                                       augmentation_probability=augmentation_probability
                                       )
-    print_debug_msg(f"LoadImagesAndLabels... done")
     batch_size = min(batch_size, len(dataset))
     nw = min([os.cpu_count() // world_size, batch_size if batch_size > 1 else 0, workers])  # number of workers
     sampler = torch.utils.data.distributed.DistributedSampler(dataset) if rank != -1 else None
@@ -104,6 +97,8 @@ def create_dataloader(path, imgsz, batch_size, stride, opt, hyp=None, augment=Fa
                         sampler=sampler,
                         pin_memory=True,
                         collate_fn=LoadImagesAndLabels.collate_fn4 if quad else LoadImagesAndLabels.collate_fn)
+
+    print_debug_msg(f"create_dataloader: data-loader created")
     return dataloader, dataset
 
 

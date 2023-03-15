@@ -27,8 +27,9 @@ from models.yolo import Model
 from utils.autoanchor import check_anchors
 from utils.datasets import create_dataloader
 from utils.general import (labels_to_class_weights, increment_path, labels_to_image_weights, init_seeds,
-                           fitness, strip_optimizer, get_latest_run, check_dataset, check_file, check_img_size,
+                           strip_optimizer, get_latest_run, check_dataset, check_file, check_img_size,
                            print_mutation, set_logging, one_cycle, colorstr)
+from utils.metrics import fitness
 from utils.google_utils import attempt_download
 from utils.loss import ComputeLoss, ComputeLossOTA
 from utils.plots import plot_images, plot_labels, plot_results, plot_evolution
@@ -89,13 +90,14 @@ def train(hyp, opt, device, tb_writer=None):
     print_debug_msg(f"weights={weights}, pretrained={pretrained}")
     if pretrained:
         with torch_distributed_zero_first(rank):
-            print_debug_msg(f"Attempting to download weights={weights}")
+            print_debug_msg(f"Download weights if necessary: {weights}")
             attempt_download(weights)  # download if not found locally
 
         ckpt = torch.load(weights, map_location=device)  # load checkpoint
         model = Model(opt.cfg or ckpt['model'].yaml, ch=3, nc=nc, anchors=hyp.get('anchors')).to(device)  # create
         exclude = ['anchor'] if (opt.cfg or hyp.get('anchors')) and not opt.resume else []  # exclude keys
         state_dict = ckpt['model'].float().state_dict()  # to FP32
+        # WHICH FUNCTION PRINTS A MODEL SUMMARY?
         state_dict = intersect_dicts(state_dict, model.state_dict(), exclude=exclude)  # intersect
         model.load_state_dict(state_dict, strict=False)  # load
         logger.info('Transferred %g/%g items from %s' % (len(state_dict), len(model.state_dict()), weights))  # report
@@ -194,7 +196,7 @@ def train(hyp, opt, device, tb_writer=None):
     optimizer.add_param_group({'params': pg1, 'weight_decay': hyp['weight_decay']})  # add pg1 with weight_decay
     optimizer.add_param_group({'params': pg2})  # add pg2 (biases)
     logger.info('Optimizer groups: %g .bias, %g conv.weight, %g other' % (len(pg2), len(pg1), len(pg0)))
-    print_debug_msg(f"optimizer={optimizer}")
+    # print_debug_msg(f"optimizer={optimizer}")
     del pg0, pg1, pg2
 
     # Scheduler https://arxiv.org/pdf/1812.01187.pdf
@@ -590,12 +592,7 @@ if __name__ == '__main__':
                         help="Probability to apply data augmentation based on the albumentations package.")
 
     opt = parser.parse_args()
-    # opt.data = "data/CNN4VIAB.yaml"  # FIXME: delete
-    # opt.cfg = "cfg/training/yolov7-CNN4VIAB.yaml"  # FIXME: delete
-    # opt.weights = "trained_models/yolov7-tiny.pt"  # FIXME: delete
-    # opt.albumentations_probability = 0.3  # FIXME: delete
-    # opt.epochs = 2
-    # opt.name = "TEST"
+
     print_debug_msg(f"parser opt={opt}")
 
     # Set DDP variables
@@ -623,7 +620,7 @@ if __name__ == '__main__':
         opt.data, opt.cfg, opt.hyp = check_file(opt.data), check_file(opt.cfg), check_file(opt.hyp)  # check files
         assert len(opt.cfg) or len(opt.weights), 'either --cfg or --weights must be specified'
         opt.img_size.extend([opt.img_size[-1]] * (2 - len(opt.img_size)))  # extend to 2 sizes (train, test)
-        opt.name = 'evolve' if opt.evolve else opt.name
+        opt.name = opt.name + '-evolve' if opt.evolve else opt.name
         opt.save_dir = increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok | opt.evolve)  # increment run
 
     # DDP mode
@@ -655,6 +652,7 @@ if __name__ == '__main__':
 
     # Evolve hyperparameters (optional)
     else:
+        path_to_evolve_notes = Path(opt.name).with_suffix(".txt")
         # Hyperparameter evolution metadata (mutation scale 0-1, lower_limit, upper_limit)
         meta = {'lr0': (1, 1e-5, 1e-1),  # initial learning rate (SGD=1E-2, Adam=1E-3)
                 'lrf': (1, 0.01, 1.0),  # final OneCycleLR learning rate (lr0 * lrf)
@@ -685,7 +683,8 @@ if __name__ == '__main__':
                 'mosaic': (1, 0.0, 1.0),  # image mixup (probability)
                 'mixup': (1, 0.0, 1.0),   # image mixup (probability)
                 'copy_paste': (1, 0.0, 1.0),  # segment copy-paste (probability)
-                'paste_in': (1, 0.0, 1.0)}    # segment copy-paste (probability)
+                'paste_in': (1, 0.0, 1.0)    # segment copy-paste (probability)
+                }
         
         with open(opt.hyp, errors='ignore') as f:
             hyp = yaml.safe_load(f)  # load hyps dict
@@ -695,21 +694,25 @@ if __name__ == '__main__':
         assert opt.local_rank == -1, 'DDP mode not implemented for --evolve'
         opt.notest, opt.nosave = True, True  # only test/save final epoch
         # ei = [isinstance(x, (int, float)) for x in hyp.values()]  # evolvable indices
-        yaml_file = Path(opt.save_dir) / 'hyp_evolved.yaml'  # save best result here
+        yaml_file = Path(opt.save_dir) / f'hyp_evolved.yaml'  # save best result here
         if opt.bucket:
-            os.system('gsutil cp gs://%s/evolve.txt .' % opt.bucket)  # download evolve.txt if exists
+            os.system(f'gsutil cp gs://%s/{path_to_evolve_notes.name} .' % opt.bucket)  # download evolve.txt if exists
 
         for _ in range(300):  # generations to evolve
-            if Path('evolve.txt').exists():  # if evolve.txt exists: select best hyps and mutate
+
+            if path_to_evolve_notes.exists():
+                # if file exists: select best hyps and mutate
                 # Select parent(s)
                 parent = 'single'  # parent selection method: 'single' or 'weighted'
-                x = np.loadtxt('evolve.txt', ndmin=2)
+                x = np.loadtxt(path_to_evolve_notes.as_posix(), ndmin=2)
                 n = min(5, len(x))  # number of previous results to consider
-                x = x[np.argsort(-fitness(x))][:n]  # top n mutations
+                x = x[np.argsort(-fitness(x))][:n]  # top n mutations evolve.txt
                 w = fitness(x) - fitness(x).min()  # weights
                 if parent == 'single' or len(x) == 1:
-                    # x = x[random.randint(0, n - 1)]  # random selection
-                    x = x[random.choices(range(n), weights=w)[0]]  # weighted selection
+                    if len(x) > 1:
+                        x = x[random.choices(range(n), weights=w)[0]]  # weighted selection
+                    else:
+                        x = x[random.randint(0, n - 1)]  # random selection
                 elif parent == 'weighted':
                     x = (x * w.reshape(n, 1)).sum(0) / w.sum()  # weighted combination
 
@@ -722,8 +725,9 @@ if __name__ == '__main__':
                 v = np.ones(ng)
                 while all(v == 1):  # mutate until a change occurs (prevent duplicates)
                     v = (g * (npr.random(ng) < mp) * npr.randn(ng) * npr.random() * s + 1).clip(0.3, 3.0)
-                for i, k in enumerate(hyp.keys()):  # plt.hist(v.ravel(), 300)
-                    hyp[k] = float(x[i + 7] * v[i])  # mutate
+                n_result_values = 7
+                for i, k in enumerate([ky for ky in hyp.keys() if ky in meta]):  # plt.hist(v.ravel(), 300)
+                    hyp[k] = float(x[i + n_result_values] * v[i])  # mutate
 
             # Constrain to limits
             for k, v in meta.items():
@@ -733,9 +737,10 @@ if __name__ == '__main__':
 
             # Train mutation
             results = train(hyp.copy(), opt, device)
+            assert len(results) == n_result_values
 
             # Write mutation results
-            print_mutation(hyp.copy(), results, yaml_file, opt.bucket)
+            print_mutation(hyp.copy(), results, yaml_file, opt.bucket, path_to_evolve_notes.name)
 
         # Plot results
         plot_evolution(yaml_file)
