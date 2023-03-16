@@ -698,8 +698,9 @@ if __name__ == '__main__':
         if opt.bucket:
             os.system(f'gsutil cp gs://%s/{path_to_evolve_notes.name} .' % opt.bucket)  # download evolve.txt if exists
 
+        # number of result values / evaluation values from training function
+        n_result_values = 7
         for _ in range(300):  # generations to evolve
-
             if path_to_evolve_notes.exists():
                 # if file exists: select best hyps and mutate
                 # Select parent(s)
@@ -725,7 +726,7 @@ if __name__ == '__main__':
                 v = np.ones(ng)
                 while all(v == 1):  # mutate until a change occurs (prevent duplicates)
                     v = (g * (npr.random(ng) < mp) * npr.randn(ng) * npr.random() * s + 1).clip(0.3, 3.0)
-                n_result_values = 7
+
                 for i, k in enumerate([ky for ky in hyp.keys() if ky in meta]):  # plt.hist(v.ravel(), 300)
                     hyp[k] = float(x[i + n_result_values] * v[i])  # mutate
 
