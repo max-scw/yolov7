@@ -564,6 +564,7 @@ if __name__ == '__main__':
     parser.add_argument('--notest', action='store_true', help='only test final epoch')
     parser.add_argument('--noautoanchor', action='store_true', help='disable autoanchor check')
     parser.add_argument('--evolve', action='store_true', help='evolve hyperparameters')
+    parser.add_argument('--evolve-generations', type=int, default=300, help='how many generations / iterations to evolve hyperparameters')
     parser.add_argument('--bucket', type=str, default='', help='gsutil bucket')
     parser.add_argument('--cache-images', action='store_true', help='cache images for faster training')
     parser.add_argument('--image-weights', action='store_true', help='use weighted image selection for training')
@@ -700,7 +701,7 @@ if __name__ == '__main__':
 
         # number of result values / evaluation values from training function
         n_result_values = 7
-        for _ in range(300):  # generations to evolve
+        for _ in range(opt.evolve_generations):  # generations to evolve
             if path_to_evolve_notes.exists():
                 # if file exists: select best hyps and mutate
                 # Select parent(s)
