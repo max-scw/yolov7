@@ -347,8 +347,9 @@ def plot_evolution(yaml_file='data/hyp.finetune.yaml',
         if i % 5 != 0:
             plt.yticks([])
         print('%15s: %.3g' % (k, mu))
-    plt.savefig(filename + '.png', dpi=200)
-    print('\nPlot saved as evolve.png')
+    filename = Path(filename).with_suffix('.png')
+    plt.savefig(filename, dpi=200)
+    print(f'\nPlot saved as {filename.as_posix()}')
 
 
 def profile_idetection(start=0, stop=0, labels=(), save_dir=''):
