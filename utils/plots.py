@@ -21,6 +21,8 @@ from scipy.signal import butter, filtfilt
 from utils.general import xywh2xyxy, xyxy2xywh
 from utils.metrics import fitness
 
+from typing import List, Union, Any
+
 # Settings
 matplotlib.rc('font', **{'size': 11})
 matplotlib.use('Agg')  # for writing to files only
@@ -318,7 +320,10 @@ def plot_labels(labels, names=(), save_dir=Path(''), loggers=None):
             v.log({"Labels": [v.Image(str(x), caption=x.name) for x in save_dir.glob('*labels*.jpg')]}, commit=False)
 
 
-def plot_evolution(yaml_file='data/hyp.finetune.yaml', filename: str = "evolve.txt"):  # from utils.plots import *; plot_evolution()
+def plot_evolution(yaml_file='data/hyp.finetune.yaml',
+                   filename: str = "evolve.txt",
+                   keys: List[Union[str, Any]] = None
+                   ):  # from utils.plots import *; plot_evolution()
     # Plot hyperparameter evolution results in evolve.txt
     with open(yaml_file) as f:
         hyp = yaml.load(f, Loader=yaml.SafeLoader)
@@ -327,7 +332,11 @@ def plot_evolution(yaml_file='data/hyp.finetune.yaml', filename: str = "evolve.t
     # weights = (f - f.min()) ** 2  # for weighted results
     plt.figure(figsize=(10, 12), tight_layout=True)
     matplotlib.rc('font', **{'size': 8})
-    for i, (k, v) in enumerate(hyp.items()):
+    if keys is None:
+        hyp2plot = hyp
+    else:
+        hyp2plot = {ky: hyp[ky] for ky in keys}
+    for i, (k, v) in enumerate(hyp2plot.items()):
         y = x[:, i + 7]
         # mu = (y * weights).sum() / weights.sum()  # best weighted result
         mu = y[f.argmax()]  # best single result

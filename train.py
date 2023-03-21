@@ -712,8 +712,9 @@ if __name__ == '__main__':
                 if parent == 'single' or len(x) == 1:
                     if len(x) > 1:
                         x = x[random.choices(range(n), weights=w)[0]]  # weighted selection
+                        # x = x[random.randint(0, n - 1)]  # random selection
                     else:
-                        x = x[random.randint(0, n - 1)]  # random selection
+                        x = x[0]  # random selection
                 elif parent == 'weighted':
                     x = (x * w.reshape(n, 1)).sum(0) / w.sum()  # weighted combination
 
@@ -744,6 +745,6 @@ if __name__ == '__main__':
             print_mutation(hyp.copy(), results, yaml_file, opt.bucket, path_to_evolve_notes.name)
 
         # Plot results
-        plot_evolution(yaml_file)
+        plot_evolution(yaml_file, filename=path_to_evolve_notes.as_posix(), keys=meta.keys())
         print(f'Hyperparameter evolution complete. Best results saved as: {yaml_file}\n'
               f'Command to train a new model with these hyperparameters: $ python train.py --hyp {yaml_file}')
