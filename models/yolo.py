@@ -531,7 +531,7 @@ class Model(nn.Module):
 
         # Build strides, anchors
         m = self.model[-1]  # Detect()
-        if isinstance(m, (Detect, IDetect, IAuxDetect)):
+        if isinstance(m, (Detect, IDetect, IAuxDetect, IBin, IKeypoint)):
             s = 256  # 2x min stride
             if isinstance(m, IAuxDetect):
                 m.stride = torch.tensor(
