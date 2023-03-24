@@ -113,7 +113,7 @@ def output_to_target(output):
     return np.array(targets)
 
 
-def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max_size=640, max_subplots=16):
+def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max_size: int = 640, max_subplots: int = 16) -> np.ndarray:
     # Plot image grid with labels
 
     if isinstance(images, torch.Tensor):
@@ -129,7 +129,9 @@ def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max
     tf = max(tl - 1, 1)  # font thickness
     bs, _, h, w = images.shape  # batch size, _, height, width
     bs = min(bs, max_subplots)  # limit plot images
-    ns = np.ceil(bs ** 0.5)  # number of subplots (square)
+    aspect_ratio = 5 / 4
+    ns_w = int(np.floor(bs / (aspect_ratio + 1)))
+    ns_h = int(np.ceil(bs / ns_w))
 
     # Check if we should resize
     scale_factor = max_size / max(h, w)
@@ -138,13 +140,14 @@ def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max
         w = math.ceil(scale_factor * w)
 
     colors = color_list()  # list of colors
-    mosaic = np.full((int(ns * h), int(ns * w), 3), 255, dtype=np.uint8)  # init
+    mosaic = np.full((int(ns_h * h), int(ns_w * w), 3), 255, dtype=np.uint8)  # init
     for i, img in enumerate(images):
         if i == max_subplots:  # if last batch has fewer images than we expect
             break
-
-        block_x = int(w * (i // ns))
-        block_y = int(h * (i % ns))
+        i_x = i % ns_w
+        i_y = i // ns_w
+        block_x = int(w * i_x)
+        block_y = int(h * i_y)
 
         img = img.transpose(1, 2, 0)
         if scale_factor < 1:
@@ -185,8 +188,8 @@ def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max
         cv2.rectangle(mosaic, (block_x, block_y), (block_x + w, block_y + h), (255, 255, 255), thickness=3)
 
     if fname:
-        r = min(1280. / max(h, w) / ns, 1.0)  # ratio to limit image size
-        mosaic = cv2.resize(mosaic, (int(ns * w * r), int(ns * h * r)), interpolation=cv2.INTER_AREA)
+        r = min(1280. / max(h / ns_h, w / ns_w), 1.0)  # ratio to limit image size
+        mosaic = cv2.resize(mosaic, (int(ns_w * w * r), int(ns_h * h * r)), interpolation=cv2.INTER_AREA)
         # cv2.imwrite(fname, cv2.cvtColor(mosaic, cv2.COLOR_BGR2RGB))  # cv2 save
         Image.fromarray(mosaic).save(fname)  # PIL save
     return mosaic
