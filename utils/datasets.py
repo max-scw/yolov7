@@ -357,8 +357,9 @@ class LoadStreams:  # multiple IP or RTSP cameras
 
 def img2label_paths(img_paths):
     # Define label paths as a function of image paths
-    sa, sb = os.sep + 'images' + os.sep, os.sep + 'labels' + os.sep  # /images/, /labels/ substrings
-    return ['txt'.join(x.replace(sa, sb, 1).rsplit(x.split('.')[-1], 1)) for x in img_paths]
+    # sa, sb = os.sep + 'images' + os.sep, os.sep + 'labels' + os.sep  # /images/, /labels/ substrings
+    # return ['txt'.join(x.replace(sa, sb, 1).rsplit(x.split('.')[-1], 1)) for x in img_paths]
+    return [Path(x).with_suffix('.txt').as_posix() for x in img_paths]
 
 
 class LoadImagesAndLabels(Dataset):  # for training/testing
@@ -519,7 +520,8 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                 # verify labels
                 if os.path.isfile(lb_file):
                     nf += 1  # label found
-                    # print_debug_msg(f"label found: {lb_file}")
+
+                    # read file with labels
                     with open(lb_file, 'r') as f:
                         l = [x.split() for x in f.read().strip().splitlines()]
                         if any([len(x) > 8 for x in l]):  # is segment
@@ -529,7 +531,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                         l = np.array(l, dtype=np.float32)
                         # print_debug_msg(f"l={l}")
                     if len(l):
-                        assert l.shape[1] == 5, 'labels require 5 columns each'
+                        assert l.shape[1] == 5 or l.shape[1] == 3, 'labels require 3 or 5 columns each (for keypoints or bounding-boxes respectively)'
                         assert (l >= 0).all(), 'negative labels'
                         assert (l[:, 1:] <= 1).all(), 'non-normalized or out of bounds coordinate labels'
                         assert np.unique(l, axis=0).shape[0] == l.shape[0], 'duplicate labels'
