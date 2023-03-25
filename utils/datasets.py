@@ -51,8 +51,9 @@ def get_hash(files: List[Union[str, pl.Path]]) -> float:
     """Returns a single hash value of a list of files"""
     # ensure pathlib object
     files = [pl.Path(fl) for fl in files]
+    print_debug_msg(f"files[0].stat(): {files[0].stat()}")
     # sum file statistics
-    return sum(sum(fl.stat()) for fl in files if fl.is_file())
+    return sum([fl.stat().st_mtime_ns + fl.stat().st_size for fl in files if fl.is_file()])
 
 
 def exif_size(img: Image. Image) -> Tuple[int, int]:
@@ -797,8 +798,19 @@ def load_mosaic(self, index):
         # Labels
         labels, segments = self.labels[index].copy(), self.segments[index].copy()
         if labels.size:
-            labels[:, 1:] = xywhn2xyxy(labels[:, 1:], w, h, padw, padh)  # normalized xywh to pixel xyxy format
-            segments = [xyn2xy(x, w, h, padw, padh) for x in segments]
+            # make absolute coordinates (lower-left + upper-right corner)
+            sz_lbl = labels[0].size
+            if sz_lbl == 5:
+                # bounding boxes
+                # normalized xywh to pixel xyxy format
+                labels[:, 1:] = xywhn2xyxy(labels[:, 1:], w, h, padw, padh)
+                segments = [xyn2xy(x, w, h, padw, padh) for x in segments]
+            elif sz_lbl == 4:
+                # keypoints
+                labels[:, 1:3] = labels[:, 1:3] * [w, h] + [padw, padh]
+            else:
+                raise ValueError(f"Unexpected size of labels. "
+                                 f"Was expecting length 5 for bounding boxes or 4 for keypoints but was {sz_lbl}.")
         labels4.append(labels)
         segments4.extend(segments)
 
