@@ -51,7 +51,6 @@ def get_hash(files: List[Union[str, pl.Path]]) -> float:
     """Returns a single hash value of a list of files"""
     # ensure pathlib object
     files = [pl.Path(fl) for fl in files]
-    print_debug_msg(f"files[0].stat(): {files[0].stat()}")
     # sum file statistics
     return sum([fl.stat().st_mtime_ns + fl.stat().st_size for fl in files if fl.is_file()])
 
@@ -71,9 +70,20 @@ def exif_size(img: Image. Image) -> Tuple[int, int]:
     return s
 
 
-def create_dataloader(path, imgsz, batch_size, stride, opt, hyp=None, augment=False, cache=False, pad=0.0, rect=False,
-                      rank=-1, world_size=1, workers=8, image_weights=False, quad=False, prefix='',
-                      yolov5_augmentation: bool = True, augmentation_probability: float = 0.01
+def create_dataloader(path, imgsz, batch_size, stride, opt,
+                      hyp=None,
+                      augment: bool = False,
+                      cache: bool = False,
+                      pad: float = 0.0,
+                      rect: bool = False,
+                      rank: int = -1,
+                      world_size: int = 1,
+                      workers: int = 8,
+                      image_weights: bool = False,
+                      quad: bool = False,
+                      prefix: str = '',
+                      yolov5_augmentation: bool = True,
+                      augmentation_probability: float = 0.01
                       ):
     # Make sure only the first process in DDP process the dataset first, and the following others can use the cache
     print_debug_msg(f"LoadImagesAndLabels, path: {path}")
@@ -89,7 +99,8 @@ def create_dataloader(path, imgsz, batch_size, stride, opt, hyp=None, augment=Fa
                                       image_weights=image_weights,
                                       prefix=prefix,
                                       yolov5_augmentation=yolov5_augmentation,
-                                      augmentation_probability=augmentation_probability
+                                      augmentation_probability=augmentation_probability,
+                                      # is_keypoint=False
                                       )
     batch_size = min(batch_size, len(dataset))
     nw = min([os.cpu_count() // world_size, batch_size if batch_size > 1 else 0, workers])  # number of workers
@@ -379,10 +390,12 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                  pad: float = 0.0,
                  prefix: str = '',
                  yolov5_augmentation: bool = True,
-                 augmentation_probability: float = 0.3
+                 augmentation_probability: float = 0.3,
+                 is_keypoint: bool = False
                  ):
         self.img_size = img_size
         self.augment = augment
+        self.is_keypoint = is_keypoint
         self.hyp = hyp
         self.image_weights = image_weights
         self.rect = False if image_weights else rect
@@ -394,7 +407,9 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         # set augmentation functions by the python package albumentations
         if self.augment:
             self.albumentations = Albumentations(augment_ogl=yolov5_augmentation,
-                                                 augmentation_probability=augmentation_probability)
+                                                 augmentation_probability=augmentation_probability,
+                                                 annotation_type="kpt" if is_keypoint else "bbox"
+                                                 )
         else:
             self.albumentations = None
 
@@ -434,7 +449,6 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
             cache = torch.load(cache_path)  # load
             # check if cache was changed
             hash_of_files = get_hash(self.label_files + self.img_files)
-            print_debug_msg(f"hash cache file: {cache['hash']} ?= {hash_of_files} (hash of files)")
             if cache['hash'] != hash_of_files:
                 # files were changed
                 cache_exists = False
@@ -1290,8 +1304,11 @@ def pastein(image, labels, sample_labels, sample_images, sample_masks):
 
 
 class Albumentations:
-    # YOLOv5 Albumentations class (optional, only used if package is installed)
-    def __init__(self, augment_ogl: bool = True, augmentation_probability: float = 0.3):
+    # (optional, only used if package is installed)
+    TYPE_BBOX = ["bbox", "boundingbox", "bounding box", "box"]
+    TYPE_KEYPONIT = ["kpt", "kypt", "keypoint"]
+
+    def __init__(self, augment_ogl: bool = True, augmentation_probability: float = 0.3, annotation_type: str = "bbox"):
         self.transform = None
         import albumentations as A
 
@@ -1333,8 +1350,16 @@ class Albumentations:
             trafo_fncs.append(A.PixelDropout(dropout_prob=0.05, p=probability))
 
         print_debug_msg(f"albumentations: {trafo_fncs}")
-        self.transform = A.Compose(trafo_fncs,
-                                   bbox_params=A.BboxParams(format='pascal_voc', label_fields=['class_labels']))
+
+        if annotation_type.lower() in self.TYPE_BBOX:
+            args = {"bbox_params": A.BboxParams(format='pascal_voc', label_fields=['class_labels'])}
+        elif annotation_type.lower() in self.TYPE_KEYPONIT:
+            args = {"keypoint_params": A.KeypointParams(format='xy', label_fields=['class_labels'], remove_invisible=False)}
+        else:
+            raise ValueError(f"Unknown annotation format: {annotation_type}. "
+                             f"Valid formats are {self.TYPE_BBOX} for bounding boxes "
+                             f"or {self.TYPE_KEYPONIT} for keypoints")
+        self.transform = A.Compose(trafo_fncs, **args)
 
         logging.info(colorstr('albumentations: ') + ', '.join(f'{x}' for x in self.transform.transforms if x.p))
 
