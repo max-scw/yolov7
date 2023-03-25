@@ -34,7 +34,7 @@ from utils.general import (check_requirements,
 from utils.torch_utils import torch_distributed_zero_first
 from utils.debugging import print_debug_msg
 
-from typing import Union, List, Tuple
+from typing import Union, List, Tuple, Dict, Any
 
 # global parameters
 IMAGE_FORMATS = ['bmp', 'jpg', 'jpeg', 'png', 'tif', 'tiff', 'dng', 'webp', 'mpo']  # acceptable image suffixes
@@ -47,9 +47,12 @@ for orientation in ExifTags.TAGS.keys():
         break
 
 
-def get_hash(files):
-    # Returns a single hash value of a list of files
-    return sum(os.path.getsize(f) for f in files if os.path.isfile(f))
+def get_hash(files: List[Union[str, pl.Path]]) -> float:
+    """Returns a single hash value of a list of files"""
+    # ensure pathlib object
+    files = [pl.Path(fl) for fl in files]
+    # sum file statistics
+    return sum(sum(fl.stat()) for fl in files if fl.is_file())
 
 
 def exif_size(img: Image. Image) -> Tuple[int, int]:
@@ -428,13 +431,20 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         cache_exists = cache_path.is_file()
         if cache_exists:
             cache = torch.load(cache_path)  # load
-        else:
+            # check if cache was changed
+            hash_of_files = get_hash(self.label_files + self.img_files)
+            print_debug_msg(f"hash cache file: {cache['hash']} ?= {hash_of_files} (hash of files)")
+            if cache['hash'] != hash_of_files:
+                # files were changed
+                cache_exists = False
+        if not cache_exists:
             cache = self.cache_labels(cache_path, prefix)  # cache
 
         # Display cache
         n_found, n_missing, n_empty, n_corrupted, n_files = cache.pop('results')  # found, missing, empty, corrupted, total
         if cache_exists:
-            msg = f"Scanning '{cache_path}' images and labels... {n_found} found, {n_missing} missing, {n_empty} empty, {n_corrupted} corrupted"
+            msg = f"Scanning '{cache_path}' images and labels (hash: {cache['hash']}) ... " \
+                  f"{n_found} found, {n_missing} missing, {n_empty} empty, {n_corrupted} corrupted"
             tqdm(None, desc=prefix + msg, total=n_files, initial=n_files)  # display cache results
 
         assert n_found > 0 or not augment, f'{prefix}No labels in {cache_path}. Can not train without labels.'
@@ -504,15 +514,17 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                 pbar.desc = f'{prefix}Caching images ({gb / 1E9:.1f}GB)'
             pbar.close()
 
-    def cache_labels(self, path_to_cache: Union[str, pl.Path] = './labels.cache', prefix: str = ''):
+    def cache_labels(self, path_to_cache: Union[str, pl.Path] = './labels.cache', prefix: str = '') -> Dict[str, Any]:
         # ensure pathlib object
         path_to_cache = pl.Path(path_to_cache)
         # Cache dataset labels, check images and read shapes
-        x = {}  # dict
+        cache = {}  # dict
         n_missing, n_found, n_empty, n_corrupted = 0, 0, 0, 0  # number missing, found, empty, duplicate / NaN
 
         pbar = tqdm(zip(self.img_files, self.label_files), desc='Scanning images', total=len(self.img_files))
-        for i, (im_file, lb_file) in enumerate(pbar):
+        n_files = 0
+        for im_file, lb_file in pbar:
+            n_files += 1
             # ensure pathlib object
             lb_file = pl.Path(lb_file)
 
@@ -556,7 +568,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                     # if path is not a file (to labels)
                     n_missing += 1  # label missing
                     lines = np.zeros((0, 5), dtype=np.float32)  # FIXME: 4 if keypoints
-                x[im_file] = [lines, shape, segments]
+                cache[im_file] = [lines, shape, segments]
             except Exception as e:
                 n_corrupted += 1
                 print(f'{prefix}WARNING: Ignoring corrupted image and/or label {im_file}: {e}')
@@ -568,12 +580,12 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         if n_found == 0:
             print(f'{prefix}WARNING: No labels found in {path_to_cache}.')
 
-        x['hash'] = get_hash(self.label_files + self.img_files)
-        x['results'] = n_found, n_missing, n_empty, n_corrupted, i + 1
-        x['version'] = 0.1  # cache version
-        torch.save(x, path_to_cache)  # save for next time
-        logging.info(f'{prefix}New cache created: {path_to_cache}')
-        return x
+        cache['hash'] = get_hash(self.label_files + self.img_files)
+        cache['results'] = n_found, n_missing, n_empty, n_corrupted, n_files
+        cache['version'] = 0.1  # cache version
+        torch.save(cache, path_to_cache)  # save for next time
+        logging.info(f"{prefix}New cache created: {path_to_cache} (hash: {cache['hash']})")
+        return cache
 
     def __len__(self):
         return len(self.img_files)
@@ -714,9 +726,9 @@ def load_image(self, index):
     # loads 1 image from dataset, returns img, original hw, resized hw
     img = self.imgs[index]
     if img is None:  # not cached
-        path = self.img_files[index]
-        img = cv2.imread(path)  # BGR
-        assert img is not None, 'Image Not Found ' + path
+        p2img = pl.Path(self.img_files[index])
+        img = cv2.imread(p2img.as_posix())  # BGR
+        assert img is not None, f"Image Not Found {p2img.as_posix()}"
         h0, w0 = img.shape[:2]  # orig hw
         r = self.img_size / max(h0, w0)  # resize image to img_size
         if r != 1:  # always resize down, only resize up if training with augmentation
