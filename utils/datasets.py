@@ -9,7 +9,7 @@ import shutil
 import time
 from itertools import repeat
 from multiprocessing.pool import ThreadPool
-from pathlib import Path
+import pathlib as pl
 from threading import Thread
 
 import cv2
@@ -34,10 +34,11 @@ from utils.general import (check_requirements,
 from utils.torch_utils import torch_distributed_zero_first
 from utils.debugging import print_debug_msg
 
-# Parameters
-help_url = 'https://github.com/ultralytics/yolov5/wiki/Train-Custom-Data'
-img_formats = ['bmp', 'jpg', 'jpeg', 'png', 'tif', 'tiff', 'dng', 'webp', 'mpo']  # acceptable image suffixes
-vid_formats = ['mov', 'avi', 'mp4', 'mpg', 'mpeg', 'm4v', 'wmv', 'mkv']  # acceptable video suffixes
+from typing import Union, List
+
+# global parameters
+IMAGE_FORMATS = ['bmp', 'jpg', 'jpeg', 'png', 'tif', 'tiff', 'dng', 'webp', 'mpo']  # acceptable image suffixes
+VIDEO_FORMATS = ['mov', 'avi', 'mp4', 'mpg', 'mpeg', 'm4v', 'wmv', 'mkv']  # acceptable video suffixes
 logger = logging.getLogger(__name__)
 
 # Get orientation exif tag
@@ -138,7 +139,7 @@ class _RepeatSampler(object):
 
 class LoadImages:  # for inference
     def __init__(self, path, img_size=640, stride=32):
-        p = str(Path(path).absolute())  # os-agnostic absolute path
+        p = str(pl.Path(path).absolute())  # os-agnostic absolute path
         if '*' in p:
             files = sorted(glob.glob(p, recursive=True))  # glob
         elif os.path.isdir(p):
@@ -148,8 +149,8 @@ class LoadImages:  # for inference
         else:
             raise Exception(f'ERROR: {p} does not exist')
 
-        images = [x for x in files if x.split('.')[-1].lower() in img_formats]
-        videos = [x for x in files if x.split('.')[-1].lower() in vid_formats]
+        images = [x for x in files if x.split('.')[-1].lower() in IMAGE_FORMATS]
+        videos = [x for x in files if x.split('.')[-1].lower() in VIDEO_FORMATS]
         ni, nv = len(images), len(videos)
 
         self.img_size = img_size
@@ -163,7 +164,7 @@ class LoadImages:  # for inference
         else:
             self.cap = None
         assert self.nf > 0, f'No images or videos found in {p}. ' \
-                            f'Supported formats are:\nimages: {img_formats}\nvideos: {vid_formats}'
+                            f'Supported formats are:\nimages: {IMAGE_FORMATS}\nvideos: {VIDEO_FORMATS}'
 
     def __iter__(self):
         self.count = 0
@@ -355,15 +356,13 @@ class LoadStreams:  # multiple IP or RTSP cameras
         return 0  # 1E12 frames = 32 streams at 30 FPS for 30 years
 
 
-def img2label_paths(img_paths):
+def img2label_paths(img_paths) -> List[pl.Path]:
     # Define label paths as a function of image paths
-    # sa, sb = os.sep + 'images' + os.sep, os.sep + 'labels' + os.sep  # /images/, /labels/ substrings
-    # return ['txt'.join(x.replace(sa, sb, 1).rsplit(x.split('.')[-1], 1)) for x in img_paths]
-    return [Path(x).with_suffix('.txt').as_posix() for x in img_paths]
+    return [pl.Path(x).with_suffix('.txt') for x in img_paths]
 
 
 class LoadImagesAndLabels(Dataset):  # for training/testing
-    def __init__(self, path,
+    def __init__(self, path_to_data_info: Union[str, pl.Path],
                  img_size: int = 640,
                  batch_size: int = 16,
                  augment: bool = False,
@@ -386,53 +385,62 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         self.mosaic = self.augment and not self.rect  # load 4 images at a time into a mosaic (only during training)
         self.mosaic_border = [-img_size // 2, -img_size // 2]
         self.stride = stride
-        self.path = path
-        # try:
-        if augment:
+        self.path_data_info = pl.Path(path_to_data_info)
+
+        # set augmentation functions by the python package albumentations
+        if self.augment:
             self.albumentations = Albumentations(augment_ogl=yolov5_augmentation,
                                                  augmentation_probability=augmentation_probability)
         else:
             self.albumentations = None
 
         try:
-            f = []  # image files
-            for p in path if isinstance(path, list) else [path]:
-                p = Path(p)  # os-agnostic
-                if p.is_dir():  # dir
-                    f += glob.glob(str(p / '**' / '*.*'), recursive=True)
-                    # f = list(p.rglob('**/*.*'))  # pathlib
-                elif p.is_file():  # file
-                    with open(p, 'r') as t:
-                        t = t.read().strip().splitlines()
-                        parent = str(p.parent) + os.sep
-                        f += [x.replace('./', parent) if x.startswith('./') else x for x in t]  # local to global path
-                        # f += [p.parent / x.lstrip(os.sep) for x in t]  # local to global path (pathlib)
+            image_files = []  # image files
+            for p2fl in self.path_data_info if isinstance(self.path_data_info, list) else [self.path_data_info]:
+                p2fl = pl.Path(p2fl)  # os-agnostic
+
+                if p2fl.is_dir():  # dir
+                    image_files += list(p2fl.glob("**/*.*"))
+                elif p2fl.is_file():  # file
+                    with open(p2fl, 'r') as fid:
+                        lines = fid.read().strip().splitlines()
+                        # convert paths to pathlib objects
+                        lines = [pl.Path(el) for el in lines]
+                        # add parent of the data info file if the path to the label file is not an absolute path.
+                        # (this is just a precaution)
+                        image_files += [el if el.is_absolute() else p2fl.parent / el for el in lines]
                 else:
-                    raise Exception(f'{prefix}{p} does not exist')
-            self.img_files = sorted([x.replace('/', os.sep) for x in f if x.split('.')[-1].lower() in img_formats])
-            # self.img_files = sorted([x for x in f if x.suffix[1:].lower() in img_formats])  # pathlib
+                    raise Exception(f'{prefix}{p2fl} does not exist')
+            # add files if they match one of the allowed image formats
+            self.img_files = sorted([pl.Path(x) for x in image_files if pl.Path(x).suffix.strip('.') in IMAGE_FORMATS])
             assert self.img_files, f'{prefix}No images found'
         except Exception as e:
-            raise Exception(f'{prefix}Error loading data from {path}: {e}\nSee {help_url}')
+            raise Exception(f'{prefix}Error loading data from {path_to_data_info}: {e}')
 
         # Check cache
         self.label_files = img2label_paths(self.img_files)  # labels
-        cache_path = (p if p.is_file() else Path(self.label_files[0]).parent).with_suffix('.cache')  # cached labels
-        if cache_path.is_file():
-            cache, exists = torch.load(cache_path), True  # load
+        if p2fl.is_file():
+            cache_path = p2fl
+        else:
+            cache_path = pl.Path(self.label_files[0]).parent
+        cache_path = cache_path.with_suffix('.cache')
+
+        cache_exists = cache_path.is_file()
+        if cache_exists:
+            cache = torch.load(cache_path)  # load
             # if cache['hash'] != get_hash(self.label_files + self.img_files) or 'version' not in cache:  # changed
             #    cache, exists = self.cache_labels(cache_path, prefix), False  # re-cache
         else:
-            cache, exists = self.cache_labels(cache_path, prefix), False  # cache
+            cache = self.cache_labels(cache_path, prefix)  # cache
 
         # Display cache
         print_debug_msg(f"Display cache")
         nf, nm, ne, nc, n = cache.pop('results')  # found, missing, empty, corrupted, total
-        if exists:
-            d = f"Scanning '{cache_path}' images and labels... {nf} found, {nm} missing, {ne} empty, {nc} corrupted"
-            tqdm(None, desc=prefix + d, total=n, initial=n)  # display cache results
+        if cache_exists:
+            msg = f"Scanning '{cache_path}' images and labels... {nf} found, {nm} missing, {ne} empty, {nc} corrupted"
+            tqdm(None, desc=prefix + msg, total=n, initial=n)  # display cache results
         print_debug_msg(f"assert")
-        assert nf > 0 or not augment, f'{prefix}No labels in {cache_path}. Can not train without labels. See {help_url}'
+        assert nf > 0 or not augment, f'{prefix}No labels in {cache_path}. Can not train without labels.'
         print_debug_msg(f"Read cache")
         # Read cache
         cache.pop('hash')  # remove hash
@@ -481,8 +489,8 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         self.imgs = [None] * n
         if cache_images:
             if cache_images == 'disk':
-                self.im_cache_dir = Path(Path(self.img_files[0]).parent.as_posix() + '_npy')
-                self.img_npy = [self.im_cache_dir / Path(f).with_suffix('.npy').name for f in self.img_files]
+                self.im_cache_dir = pl.Path(pl.Path(self.img_files[0]).parent.as_posix() + '_npy')
+                self.img_npy = [self.im_cache_dir / pl.Path(f).with_suffix('.npy').name for f in self.img_files]
                 self.im_cache_dir.mkdir(parents=True, exist_ok=True)
             gb = 0  # Gigabytes of cached images
             self.img_hw0, self.img_hw = [None] * n, [None] * n
@@ -499,62 +507,67 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                 pbar.desc = f'{prefix}Caching images ({gb / 1E9:.1f}GB)'
             pbar.close()
 
-    def cache_labels(self, path=Path('./labels.cache'), prefix=''):
+    def cache_labels(self, path: pl.Path = pl.Path('./labels.cache'), prefix: str = ''):
         # Cache dataset labels, check images and read shapes
         x = {}  # dict
-        nm, nf, ne, nc = 0, 0, 0, 0  # number missing, found, empty, duplicatenan
+        n_missing, n_files, n_empty, n_corrupted = 0, 0, 0, 0  # number missing, found, empty, duplicatenan
         print_debug_msg(f"cache_labels ----------------------------------------------------------")
         pbar = tqdm(zip(self.img_files, self.label_files), desc='Scanning images', total=len(self.img_files))
         for i, (im_file, lb_file) in enumerate(pbar):
+            # ensure pathlib object
+            lb_file = pl.Path(lb_file)
+
             try:
-                # print_debug_msg(f"verify images")
                 # verify images
-                im = Image.open(im_file)
-                im.verify()  # PIL verify
-                shape = exif_size(im)  # image size
+                img = Image.open(im_file)
+                img.verify()  # PIL verify
+                shape = exif_size(img)  # image size
                 segments = []  # instance segments
                 assert (shape[0] > 9) & (shape[1] > 9), f'image size {shape} <10 pixels'
-                assert im.format.lower() in img_formats, f'invalid image format {im.format}'
-                # print_debug_msg(f"{im_file}")
+                assert img.format.lower() in IMAGE_FORMATS, f'invalid image format {img.format}'
 
                 # verify labels
-                if os.path.isfile(lb_file):
-                    nf += 1  # label found
+                if lb_file.is_file():
+                    n_files += 1  # label found
 
                     # read file with labels
-                    with open(lb_file, 'r') as f:
-                        l = [x.split() for x in f.read().strip().splitlines()]
-                        if any([len(x) > 8 for x in l]):  # is segment
-                            classes = np.array([x[0] for x in l], dtype=np.float32)
-                            segments = [np.array(x[1:], dtype=np.float32).reshape(-1, 2) for x in l]  # (cls, xy1...)
-                            l = np.concatenate((classes.reshape(-1, 1), segments2boxes(segments)), 1)  # (cls, xywh)
-                        l = np.array(l, dtype=np.float32)
-                        # print_debug_msg(f"l={l}")
-                    if len(l):
-                        assert l.shape[1] == 5 or l.shape[1] == 3, 'labels require 3 or 5 columns each (for keypoints or bounding-boxes respectively)'
-                        assert (l >= 0).all(), 'negative labels'
-                        assert (l[:, 1:] <= 1).all(), 'non-normalized or out of bounds coordinate labels'
-                        assert np.unique(l, axis=0).shape[0] == l.shape[0], 'duplicate labels'
+                    with open(lb_file, 'r') as fid:
+                        lines = [x.split() for x in fid.read().strip().splitlines()]
+                        if any([len(x) > 8 for x in lines]):  # is segment
+                            # restructure if label is a "segment"
+                            classes = np.array([x[0] for x in lines], dtype=np.float32)
+                            segments = [np.array(x[1:], dtype=np.float32).reshape(-1, 2) for x in lines]  # (cls, xy1...)
+                            # build lines as were expected in the first place
+                            lines = np.concatenate((classes.reshape(-1, 1), segments2boxes(segments)), 1)  # (cls, xywh)
+                        # cast to floats (classes are supposed to be integers though)
+                        lines = np.array(lines, dtype=np.float32)
+                    # verify labels
+                    if len(lines):
+                        assert lines.shape[1] == 5 or lines.shape[1] == 4, 'labels require 4 or 5 columns each (for keypoints or bounding-boxes respectively)'
+                        assert (lines >= 0).all(), 'negative labels'
+                        assert (lines[:, 1:] <= 1).all(), 'non-normalized or out of bounds coordinate labels'
+                        assert np.unique(lines, axis=0).shape[0] == lines.shape[0], 'duplicate labels'
                     else:
-                        ne += 1  # label empty
-                        l = np.zeros((0, 5), dtype=np.float32)
+                        n_empty += 1  # label empty
+                        lines = np.zeros((0, 5), dtype=np.float32)
                 else:
-                    nm += 1  # label missing
-                    l = np.zeros((0, 5), dtype=np.float32)
-                x[im_file] = [l, shape, segments]
+                    # if path is not a file (to labels)
+                    n_missing += 1  # label missing
+                    lines = np.zeros((0, 5), dtype=np.float32)
+                x[im_file] = [lines, shape, segments]
             except Exception as e:
-                nc += 1
+                n_corrupted += 1
                 print(f'{prefix}WARNING: Ignoring corrupted image and/or label {im_file}: {e}')
 
             pbar.desc = f"{prefix}Scanning '{path.parent / path.stem}' images and labels... " \
-                        f"{nf} found, {nm} missing, {ne} empty, {nc} corrupted"
+                        f"{n_files} found, {n_missing} missing, {n_empty} empty, {n_corrupted} corrupted"
         pbar.close()
 
-        if nf == 0:
-            print(f'{prefix}WARNING: No labels found in {path}. See {help_url}')
+        if n_files == 0:
+            print(f'{prefix}WARNING: No labels found in {path}.')
 
         x['hash'] = get_hash(self.label_files + self.img_files)
-        x['results'] = nf, nm, ne, nc, i + 1
+        x['results'] = n_files, n_missing, n_empty, n_corrupted, i + 1
         x['version'] = 0.1  # cache version
         torch.save(x, path)  # save for next time
         logging.info(f'{prefix}New cache created: {path}')
@@ -562,12 +575,6 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
 
     def __len__(self):
         return len(self.img_files)
-
-    # def __iter__(self):
-    #     self.count = -1
-    #     print('ran dataset iter')
-    #     #self.shuffled_vector = np.random.permutation(self.nF) if self.augment else np.arange(self.nF)
-    #     return self
 
     def __getitem__(self, index):
         index = self.indices[index]  # linear, shuffled, or image_weights
@@ -1321,28 +1328,28 @@ def create_folder(path='./new'):
 
 def flatten_recursive(path='../coco'):
     # Flatten a recursive directory by bringing all files to top level
-    new_path = Path(path + '_flat')
+    new_path = pl.Path(path + '_flat')
     create_folder(new_path)
-    for file in tqdm(glob.glob(str(Path(path)) + '/**/*.*', recursive=True)):
-        shutil.copyfile(file, new_path / Path(file).name)
+    for file in tqdm(glob.glob(str(pl.Path(path)) + '/**/*.*', recursive=True)):
+        shutil.copyfile(file, new_path / pl.Path(file).name)
 
 
 def extract_boxes(path='../coco/'):  # from utils.datasets import *; extract_boxes('../coco128')
     # Convert detection dataset into classification dataset, with one directory per class
 
-    path = Path(path)  # images dir
+    path = pl.Path(path)  # images dir
     shutil.rmtree(path / 'classifier') if (path / 'classifier').is_dir() else None  # remove existing
     files = list(path.rglob('*.*'))
     n = len(files)  # number of files
     for im_file in tqdm(files, total=n):
-        if im_file.suffix[1:] in img_formats:
+        if im_file.suffix[1:] in IMAGE_FORMATS:
             # image
             im = cv2.imread(str(im_file))[..., ::-1]  # BGR to RGB
             h, w = im.shape[:2]
 
             # labels
-            lb_file = Path(img2label_paths([str(im_file)])[0])
-            if Path(lb_file).exists():
+            lb_file = pl.Path(img2label_paths([str(im_file)])[0])
+            if pl.Path(lb_file).exists():
                 with open(lb_file, 'r') as f:
                     lb = np.array([x.split() for x in f.read().strip().splitlines()], dtype=np.float32)  # labels
 
@@ -1366,12 +1373,12 @@ def autosplit(path='../coco', weights=(0.9, 0.1, 0.0), annotated_only=False):
     """ Autosplit a dataset into train/val/test splits and save path/autosplit_*.txt files
     Usage: from utils.datasets import *; autosplit('../coco')
     Arguments
-        path:           Path to images directory
+        path:           pl.Path to images directory
         weights:        Train, val, test weights (list)
         annotated_only: Only use images with an annotated txt file
     """
-    path = Path(path)  # images dir
-    files = sum([list(path.rglob(f"*.{img_ext}")) for img_ext in img_formats], [])  # image files only
+    path = pl.Path(path)  # images dir
+    files = sum([list(path.rglob(f"*.{img_ext}")) for img_ext in IMAGE_FORMATS], [])  # image files only
     n = len(files)  # number of files
     indices = random.choices([0, 1, 2], weights=weights, k=n)  # assign each image to a split
 
@@ -1380,7 +1387,7 @@ def autosplit(path='../coco', weights=(0.9, 0.1, 0.0), annotated_only=False):
 
     print(f'Autosplitting images from {path}' + ', using *.txt labeled images only' * annotated_only)
     for i, img in tqdm(zip(indices, files), total=n):
-        if not annotated_only or Path(img2label_paths([str(img)])[0]).exists():  # check label
+        if not annotated_only or pl.Path(img2label_paths([str(img)])[0]).exists():  # check label
             with open(path / txt[i], 'a') as f:
                 f.write(str(img) + '\n')  # add image to txt file
 
