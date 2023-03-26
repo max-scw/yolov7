@@ -70,6 +70,9 @@ def exif_size(img: Image. Image) -> Tuple[int, int]:
     return s
 
 
+
+
+
 def create_dataloader(path, imgsz, batch_size, stride, opt,
                       hyp=None,
                       augment: bool = False,
@@ -391,11 +394,13 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                  prefix: str = '',
                  yolov5_augmentation: bool = True,
                  augmentation_probability: float = 0.3,
-                 is_keypoint: bool = False
+                 n_keypoints: int = None
                  ):
+        n_keypoints = 2  # FIXME: make optional input!
         self.img_size = img_size
         self.augment = augment
-        self.is_keypoint = is_keypoint
+        self.n_kpt = n_keypoints
+        self.sz_label = 3 * self.n_kpt if self.n_kpt else 5  # (cls, x, y, w, h) for bbox, [(x, y, visibility), ...] for keypoints
         self.hyp = hyp
         self.image_weights = image_weights
         self.rect = False if image_weights else rect
@@ -408,7 +413,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         if self.augment:
             self.albumentations = Albumentations(augment_ogl=yolov5_augmentation,
                                                  augmentation_probability=augmentation_probability,
-                                                 annotation_type="kpt" if is_keypoint else "bbox"
+                                                 annotation_type="kpt" if self.n_kpt else "bbox"
                                                  )
         else:
             self.albumentations = None
@@ -569,20 +574,23 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                         lines = np.array(lines, dtype=np.float32)
                     # verify labels
                     if len(lines):
-
-                        assert lines.shape[1] == 5 or lines.shape[1] == 4, 'labels require 4 or 5 columns each (for keypoints or bounding-boxes respectively)'
+                        if self.n_kpt:
+                            msg = f'labels require 3 * #keypoints columns for keypoints ' \
+                                  f'(here: {self.sz_label} for {self.n_kpt} keypoints)'
+                        else:
+                            msg = f'labels require 1 + 4 columns for bounding-boxes'
+                        assert lines.shape[1] == self.sz_label, msg
                         assert (lines >= 0).all(), 'negative labels'
-                        # bounding-boxes expect 4 (normalized) coordinates, keypoints only 2
-                        n_coordinates = 4 if lines.shape[1] == 5 else 2
-                        assert (lines[:, 1:1 + n_coordinates] <= 1).all(), 'non-normalized or out of bounds coordinate labels'
+                        # bounding-boxes expect 4 (normalized) coordinates, keypoints 2 for each point
+                        assert (lines[:, self.idx_c] <= 1).all(), 'non-normalized or out of bounds coordinate labels'
                         assert np.unique(lines, axis=0).shape[0] == lines.shape[0], 'duplicate labels'
                     else:
                         n_empty += 1  # label empty
-                        lines = np.zeros((0, 5), dtype=np.float32)  # FIXME: 4 if keypoints
+                        lines = np.zeros((0, self.sz_label), dtype=np.float32)
                 else:
                     # if path is not a file (to labels)
                     n_missing += 1  # label missing
-                    lines = np.zeros((0, 5), dtype=np.float32)  # FIXME: 4 if keypoints
+                    lines = np.zeros((0, self.sz_label), dtype=np.float32)
                 cache[im_file] = [lines, shape, segments]
             except Exception as e:
                 n_corrupted += 1
@@ -639,7 +647,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
 
             labels = self.labels[index].copy()
             if labels.size:  # normalized xywh to pixel xyxy format
-                labels[:, 1:] = xywhn2xyxy(labels[:, 1:], ratio[0] * w, ratio[1] * h, padw=pad[0], padh=pad[1])
+                labels = self.transform_to_absolute_coordinates(labels, ratio[0] * w, ratio[1] * h, padw=pad[0], padh=pad[1])
 
         if self.augment:
             # Augment imagespace
@@ -673,27 +681,25 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                         break
                 labels = pastein(img, labels, sample_labels, sample_images, sample_masks)
 
-        nL = len(labels)  # number of labels
-        if nL:
-            labels[:, 1:5] = xyxy2xywh(labels[:, 1:5])  # convert xyxy to xywh
-            labels[:, [2, 4]] /= img.shape[0]  # normalized height 0-1
-            labels[:, [1, 3]] /= img.shape[1]  # normalized width 0-1
+        n_labels = len(labels)  # number of labels
+        if n_labels:
+            labels = self.transform_to_relative_coordinates(labels, w=img.shape[0], h=img.shape[1])
 
         if self.augment:
             # flip up-down
             if random.random() < hyp['flipud']:
                 img = np.flipud(img)
-                if nL:
+                if n_labels:
                     labels[:, 2] = 1 - labels[:, 2]
 
             # flip left-right
             if random.random() < hyp['fliplr']:
                 img = np.fliplr(img)
-                if nL:
+                if n_labels:
                     labels[:, 1] = 1 - labels[:, 1]
 
-        labels_out = torch.zeros((nL, 6))
-        if nL:
+        labels_out = torch.zeros((n_labels, self.sz_label + 1))  # +1 to add batch number (as prefix)
+        if n_labels:
             labels_out[:, 1:] = torch.from_numpy(labels)
 
         # Convert
@@ -734,6 +740,55 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
             lbl[:, 0] = i  # add target image index for build_targets()
 
         return torch.stack(img4, 0), torch.cat(label4, 0), path4, shapes4
+
+    @property
+    def idx_c(self) -> List[int]:
+        return [x for i in range(self.n_kpt) for x in (3 * i, 3 * i + 1)] if self.n_kpt else list(range(1, 5))
+
+    def transform_to_absolute_coordinates(self, labels, w, h, padw, padh, segments=None):
+        """make labels to absolute corner coordinates (lower-left + upper-right corner)"""
+        sz_lbl = labels[0].size
+        if sz_lbl == 5:
+            # bounding boxes
+            # normalized xywh to pixel xyxy format
+            labels[:, 1:] = xywhn2xyxy(labels[:, 1:], w, h, padw, padh)
+            if segments is not None:
+                segments = [xyn2xy(x, w, h, padw, padh) for x in segments]
+        elif sz_lbl % 3 == 0:
+            # keypoints
+            offset = [padw, padh] * self.n_kpt
+            img_size = [w, h] * self.n_kpt
+            labels[:, self.idx_c] = labels[:, self.idx_c] * img_size + offset
+        else:
+            msg = "Unexpected size of labels. "
+            if self.n_kpt:
+                msg += f"Was expecting 3 * #keypoints for keypoints but was {sz_lbl}."
+            else:
+                msg += f"Was expecting length 5 for bounding boxes but was {sz_lbl}."
+            raise ValueError(msg)
+        return labels
+
+    def transform_to_relative_coordinates(self, labels, w: int, h: int):
+        """make labels to relative center coordinates (center point + width + height)"""
+        sz_lbl = labels[0].size
+        if sz_lbl == 5:
+            # bounding boxes
+            # pixel xyxy format to normalized xywh
+            labels[:, 1:5] = xyxy2xywh(labels[:, 1:5])  # convert xyxy to xywh
+            labels[:, [2, 4]] /= w  # normalized height 0-1
+            labels[:, [1, 3]] /= h  # normalized width 0-1
+        elif sz_lbl % 3 == 0:
+            # keypoints
+            img_size = [w, h] * self.n_kpt
+            labels[:, self.idx_c] = labels[:, self.idx_c] / img_size
+        else:
+            msg = "Unexpected size of labels. "
+            if self.n_kpt:
+                msg += f"Was expecting 3 * #keypoints for keypoints but was {sz_lbl}."
+            else:
+                msg += f"Was expecting length 5 for bounding boxes but was {sz_lbl}."
+            raise ValueError(msg)
+        return labels
 
 
 # Ancillary functions --------------------------------------------------------------------------------------------------
@@ -813,18 +868,7 @@ def load_mosaic(self, index):
         labels, segments = self.labels[index].copy(), self.segments[index].copy()
         if labels.size:
             # make absolute coordinates (lower-left + upper-right corner)
-            sz_lbl = labels[0].size
-            if sz_lbl == 5:
-                # bounding boxes
-                # normalized xywh to pixel xyxy format
-                labels[:, 1:] = xywhn2xyxy(labels[:, 1:], w, h, padw, padh)
-                segments = [xyn2xy(x, w, h, padw, padh) for x in segments]
-            elif sz_lbl == 4:
-                # keypoints
-                labels[:, 1:3] = labels[:, 1:3] * [w, h] + [padw, padh]
-            else:
-                raise ValueError(f"Unexpected size of labels. "
-                                 f"Was expecting length 5 for bounding boxes or 4 for keypoints but was {sz_lbl}.")
+            labels = self.transform_to_absolute_coordinates(labels[:, 1:], w, h, padw, padh, segments)
         labels4.append(labels)
         segments4.extend(segments)
 
