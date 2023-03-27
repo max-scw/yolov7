@@ -113,7 +113,7 @@ def output_to_target(output):
     return np.array(targets)
 
 
-def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max_size: int = 640, max_subplots: int = 16) -> np.ndarray:
+def plot_images(images, targets, paths=None, fname='images.jpg', names: List[str] = None, max_size: int = 640, max_subplots: int = 16) -> np.ndarray:
     # Plot image grid with labels
 
     if isinstance(images, torch.Tensor):
@@ -127,11 +127,11 @@ def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max
 
     tl = 3  # line thickness
     tf = max(tl - 1, 1)  # font thickness
-    bs, _, h, w = images.shape  # batch size, _, height, width
-    bs = min(bs, max_subplots)  # limit plot images
+    batch_sz, _, h, w = images.shape  # batch size, _, height, width
+    batch_sz = min(batch_sz, max_subplots)  # limit plot images
     aspect_ratio = 5 / 4
-    ns_w = int(np.floor(bs / (aspect_ratio + 1)))
-    ns_h = int(np.ceil(bs / ns_w))
+    ns_h = int(np.round(np.sqrt(batch_sz / aspect_ratio)))
+    ns_w = int(np.ceil(batch_sz / ns_h))
 
     # Check if we should resize
     scale_factor = max_size / max(h, w)
