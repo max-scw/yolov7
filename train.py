@@ -266,7 +266,7 @@ def train(hyp, opt, device, tb_writer=None):
                                             prefix=colorstr('train: '),
                                             augment=not opt.no_augmentation,
                                             yolov5_augmentation=True if opt.albumentations_probability == 0.01 else False,
-                                            augmentation_probability=opt.albumentations_probability,
+                                            albumentation_augmentation_p=opt.albumentations_probability,
                                             mosaic_augmentation=not opt.no_mosaic_augmentation
                                             )
     mlc = np.concatenate(dataset.labels, 0)[:, 0].max()  # max label class

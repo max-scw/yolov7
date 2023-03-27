@@ -86,7 +86,7 @@ def create_dataloader(path, imgsz, batch_size, stride, opt,
                       quad: bool = False,
                       prefix: str = '',
                       yolov5_augmentation: bool = True,
-                      augmentation_probability: float = 0.01,
+                      albumentation_augmentation_p: float = 0.01,
                       mosaic_augmentation: bool = True
                       ):
     # Make sure only the first process in DDP process the dataset first, and the following others can use the cache
@@ -103,7 +103,7 @@ def create_dataloader(path, imgsz, batch_size, stride, opt,
                                       image_weights=image_weights,
                                       prefix=prefix,
                                       yolov5_augmentation=yolov5_augmentation,
-                                      augmentation_probability=augmentation_probability,
+                                      albumentation_augmentation_probability=albumentation_augmentation_p,
                                       mosaic_augmentation=mosaic_augmentation
                                       # is_keypoint=False
                                       )
@@ -396,7 +396,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                  prefix: str = '',
                  yolov5_augmentation: bool = True,
                  mosaic_augmentation: bool = True,
-                 augmentation_probability: float = 0.3,
+                 albumentation_augmentation_probability: float = 0.3,
                  n_keypoints: int = None
                  ):
         # n_keypoints = 2  # FIXME: make optional input!
@@ -415,7 +415,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         # set augmentation functions by the python package albumentations
         if self.augment:
             self.albumentations = Albumentations(augment_ogl=yolov5_augmentation,
-                                                 augmentation_probability=augmentation_probability,
+                                                 augmentation_probability=albumentation_augmentation_probability,
                                                  annotation_type="kpt" if self.n_kpt else "bbox"
                                                  )
         else:
