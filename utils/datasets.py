@@ -86,7 +86,8 @@ def create_dataloader(path, imgsz, batch_size, stride, opt,
                       quad: bool = False,
                       prefix: str = '',
                       yolov5_augmentation: bool = True,
-                      augmentation_probability: float = 0.01
+                      augmentation_probability: float = 0.01,
+                      mosaic_augmentation: bool = True
                       ):
     # Make sure only the first process in DDP process the dataset first, and the following others can use the cache
     print_debug_msg(f"LoadImagesAndLabels, path: {path}")
@@ -103,6 +104,7 @@ def create_dataloader(path, imgsz, batch_size, stride, opt,
                                       prefix=prefix,
                                       yolov5_augmentation=yolov5_augmentation,
                                       augmentation_probability=augmentation_probability,
+                                      mosaic_augmentation=mosaic_augmentation
                                       # is_keypoint=False
                                       )
     batch_size = min(batch_size, len(dataset))
@@ -393,10 +395,11 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                  pad: float = 0.0,
                  prefix: str = '',
                  yolov5_augmentation: bool = True,
+                 mosaic_augmentation: bool = True,
                  augmentation_probability: float = 0.3,
                  n_keypoints: int = None
                  ):
-        n_keypoints = 2  # FIXME: make optional input!
+        # n_keypoints = 2  # FIXME: make optional input!
         self.img_size = img_size
         self.augment = augment
         self.n_kpt = n_keypoints
@@ -404,7 +407,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         self.hyp = hyp
         self.image_weights = image_weights
         self.rect = False if image_weights else rect
-        self.mosaic = self.augment and not self.rect  # load 4 images at a time into a mosaic (only during training)
+        self.mosaic = self.augment and not self.rect and mosaic_augmentation  # load 4 images at a time into a mosaic (only during training)
         self.mosaic_border = [-img_size // 2, -img_size // 2]
         self.stride = stride
         self.path_data_info = pl.Path(path_to_data_info)
@@ -650,7 +653,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                 labels = self.transform_to_absolute_coordinates(labels, ratio[0] * w, ratio[1] * h, padw=pad[0], padh=pad[1])
 
         if self.augment:
-            # Augment imagespace
+            # Augment image space
             if not mosaic:
                 img, labels = random_perspective(img, labels,
                                                  degrees=hyp['degrees'],
@@ -868,7 +871,7 @@ def load_mosaic(self, index):
         labels, segments = self.labels[index].copy(), self.segments[index].copy()
         if labels.size:
             # make absolute coordinates (lower-left + upper-right corner)
-            labels = self.transform_to_absolute_coordinates(labels[:, 1:], w, h, padw, padh, segments)
+            labels = self.transform_to_absolute_coordinates(labels, w, h, padw, padh, segments)
         labels4.append(labels)
         segments4.extend(segments)
 

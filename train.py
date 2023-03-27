@@ -66,8 +66,8 @@ def train(hyp, opt, device, tb_writer=None):
     plots = not opt.evolve  # create plots
     cuda = device.type != 'cpu'
     init_seeds(2 + rank)
-    with open(opt.data) as f:
-        data_dict = yaml.load(f, Loader=yaml.SafeLoader)  # data dict
+    with open(opt.data) as fid:
+        data_dict = yaml.load(fid, Loader=yaml.SafeLoader)  # data dict
     is_coco = opt.data.endswith('coco.yaml')
 
     # Logging - Doing this before checking the dataset. Might update data_dict
@@ -81,9 +81,9 @@ def train(hyp, opt, device, tb_writer=None):
         # if wandb_logger.wandb:
         #     weights, epochs, hyp = opt.weights, opt.epochs, opt.hyp  # WandbLogger might update weights, epochs if resuming
 
-    nc = 1 if opt.single_cls else int(data_dict['nc'])  # number of classes
+    n_classes = 1 if opt.single_cls else int(data_dict['nc'])  # number of classes
     names = ['item'] if opt.single_cls and len(data_dict['names']) != 1 else data_dict['names']  # class names
-    assert len(names) == nc, '%g names found for nc=%g dataset in %s' % (len(names), nc, opt.data)  # check
+    assert len(names) == n_classes, '%g names found for nc=%g dataset in %s' % (len(names), n_classes, opt.data)  # check
 
     # Model
     pretrained = weights.endswith('.pt')
@@ -94,7 +94,7 @@ def train(hyp, opt, device, tb_writer=None):
             attempt_download(weights)  # download if not found locally
 
         ckpt = torch.load(weights, map_location=device)  # load checkpoint
-        model = Model(opt.cfg or ckpt['model'].yaml, ch=3, nc=nc, anchors=hyp.get('anchors')).to(device)  # create
+        model = Model(opt.cfg or ckpt['model'].yaml, ch=3, nc=n_classes, anchors=hyp.get('anchors')).to(device)  # create
         exclude = ['anchor'] if (opt.cfg or hyp.get('anchors')) and not opt.resume else []  # exclude keys
         state_dict = ckpt['model'].float().state_dict()  # to FP32
         # WHICH FUNCTION PRINTS A MODEL SUMMARY?
@@ -102,7 +102,7 @@ def train(hyp, opt, device, tb_writer=None):
         model.load_state_dict(state_dict, strict=False)  # load
         logger.info('Transferred %g/%g items from %s' % (len(state_dict), len(model.state_dict()), weights))  # report
     else:
-        model = Model(opt.cfg, ch=3, nc=nc, anchors=hyp.get('anchors')).to(device)  # create
+        model = Model(opt.cfg, ch=3, nc=n_classes, anchors=hyp.get('anchors')).to(device)  # create
 
     with torch_distributed_zero_first(rank):
         check_dataset(data_dict)  # check
@@ -256,7 +256,6 @@ def train(hyp, opt, device, tb_writer=None):
     # Trainloader
     dataloader, dataset = create_dataloader(train_path, imgsz, batch_size, gs, opt,
                                             hyp=hyp,
-                                            augment=True,
                                             cache=opt.cache_images,
                                             rect=opt.rect,
                                             rank=rank,
@@ -265,19 +264,26 @@ def train(hyp, opt, device, tb_writer=None):
                                             image_weights=opt.image_weights,
                                             quad=opt.quad,
                                             prefix=colorstr('train: '),
+                                            augment=not opt.no_augmentation,
                                             yolov5_augmentation=True if opt.albumentations_probability == 0.01 else False,
-                                            augmentation_probability=opt.albumentations_probability
+                                            augmentation_probability=opt.albumentations_probability,
+                                            mosaic_augmentation=not opt.no_mosaic_augmentation
                                             )
     mlc = np.concatenate(dataset.labels, 0)[:, 0].max()  # max label class
-    nb = len(dataloader)  # number of batches
-    assert mlc < nc, 'Label class %g exceeds nc=%g in %s. Possible class labels are 0-%g' % (mlc, nc, opt.data, nc - 1)
+    n_batches = len(dataloader)  # number of batches
+    assert mlc < n_classes, 'Label class %g exceeds nc=%g in %s. Possible class labels are 0-%g' % (mlc, n_classes, opt.data, n_classes - 1)
 
     # Process 0
     if rank in [-1, 0]:
         testloader = create_dataloader(test_path, imgsz_test, batch_size * 2, gs, opt,  # testloader
-                                       hyp=hyp, cache=opt.cache_images and not opt.notest, rect=True, rank=-1,
-                                       world_size=opt.world_size, workers=opt.workers,
-                                       pad=0.5, prefix=colorstr('val: '))[0]
+                                       hyp=hyp,
+                                       cache=opt.cache_images and not opt.notest,
+                                       rect=True,
+                                       rank=-1,
+                                       world_size=opt.world_size,
+                                       workers=opt.workers,
+                                       pad=0.5,
+                                       prefix=colorstr('val: '))[0]
 
         if not opt.resume:
             labels = np.concatenate(dataset.labels, 0)
@@ -303,20 +309,20 @@ def train(hyp, opt, device, tb_writer=None):
 
     # Model parameters
     hyp['box'] *= 3. / nl  # scale to layers
-    hyp['cls'] *= nc / 80. * 3. / nl  # scale to classes and layers
+    hyp['cls'] *= n_classes / 80. * 3. / nl  # scale to classes and layers
     hyp['obj'] *= (imgsz / 640) ** 2 * 3. / nl  # scale to image size and layers
     hyp['label_smoothing'] = opt.label_smoothing
-    model.nc = nc  # attach number of classes to model
+    model.nc = n_classes  # attach number of classes to model
     model.hyp = hyp  # attach hyperparameters to model
     model.gr = 1.0  # iou loss ratio (obj_loss = 1.0 or iou)
-    model.class_weights = labels_to_class_weights(dataset.labels, nc).to(device) * nc  # attach class weights
+    model.class_weights = labels_to_class_weights(dataset.labels, n_classes).to(device) * n_classes  # attach class weights
     model.names = names
 
     # Start training
     t0 = time.time()
-    nw = max(round(hyp['warmup_epochs'] * nb), 1000)  # number of warmup iterations, max(3 epochs, 1k iterations)
+    nw = max(round(hyp['warmup_epochs'] * n_batches), 1000)  # number of warmup iterations, max(3 epochs, 1k iterations)
     # nw = min(nw, (epochs - start_epoch) / 2 * nb)  # limit warmup to < 1/2 of training
-    maps = np.zeros(nc)  # mAP per class
+    maps = np.zeros(n_classes)  # mAP per class
     results = (0, 0, 0, 0, 0, 0, 0)  # P, R, mAP@.5, mAP@.5-.95, val_loss(box, obj, cls)
     scheduler.last_epoch = start_epoch - 1  # do not move
     scaler = amp.GradScaler(enabled=cuda)
@@ -335,8 +341,8 @@ def train(hyp, opt, device, tb_writer=None):
         if opt.image_weights:
             # Generate indices
             if rank in [-1, 0]:
-                cw = model.class_weights.cpu().numpy() * (1 - maps) ** 2 / nc  # class weights
-                iw = labels_to_image_weights(dataset.labels, nc=nc, class_weights=cw)  # image weights
+                cw = model.class_weights.cpu().numpy() * (1 - maps) ** 2 / n_classes  # class weights
+                iw = labels_to_image_weights(dataset.labels, nc=n_classes, class_weights=cw)  # image weights
                 dataset.indices = random.choices(range(dataset.n), weights=iw, k=dataset.n)  # rand weighted idx
             # Broadcast if DDP
             if rank != -1:
@@ -355,10 +361,14 @@ def train(hyp, opt, device, tb_writer=None):
         pbar = enumerate(dataloader)
         logger.info(('\n' + '%10s' * 8) % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls', 'total', 'labels', 'img_size'))
         if rank in [-1, 0]:
-            pbar = tqdm(pbar, total=nb)  # progress bar
+            pbar = tqdm(pbar, total=n_batches)  # progress bar
         optimizer.zero_grad()
         for i, (imgs, targets, paths, _) in pbar:  # batch -------------------------------------------------------------
-            ni = i + nb * epoch  # number integrated batches (since train start)
+            if opt.export_training_images and Path(opt.export_training_images).is_dir():
+                p2fl = Path(opt.export_training_images) / f"{opt.name}_e{epoch}_b{i}.jpg"
+                plot_images(imgs, targets, fname=p2fl, max_subplots=opt.batch_size)
+
+            ni = i + n_batches * epoch  # number integrated batches (since train start)
             imgs = imgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
 
             # Warmup
@@ -443,7 +453,7 @@ def train(hyp, opt, device, tb_writer=None):
                                                  single_cls=opt.single_cls,
                                                  dataloader=testloader,
                                                  save_dir=save_dir,
-                                                 verbose=nc < 50 and final_epoch,
+                                                 verbose=n_classes < 50 and final_epoch,
                                                  plots=plots and final_epoch,
                                                  # wandb_logger=wandb_logger,
                                                  compute_loss=compute_loss,
@@ -515,7 +525,7 @@ def train(hyp, opt, device, tb_writer=None):
             #                                   if (save_dir / f).exists()]})
         # Test best.pt
         logger.info('%g epochs completed in %.3f hours.\n' % (epoch - start_epoch + 1, (time.time() - t0) / 3600))
-        if opt.data.endswith('coco.yaml') and nc == 80:  # if COCO
+        if opt.data.endswith('coco.yaml') and n_classes == 80:  # if COCO
             for m in (last, best) if best.exists() else (last):  # speed, mAP tests
                 results, _, _ = test.test(opt.data,
                                           batch_size=batch_size * 2,
@@ -585,12 +595,17 @@ if __name__ == '__main__':
     # parser.add_argument('--upload_dataset', action='store_true', help='Upload dataset as W&B artifact table')
     # parser.add_argument('--bbox_interval', type=int, default=-1, help='Set bounding-box image logging interval for W&B')
     parser.add_argument('--save_period', type=int, default=-1, help='Log model after every "save_period" epoch')
-    parser.add_argument('--artifact_alias', type=str, default="latest", help='version of dataset artifact to be used')
+    # parser.add_argument('--artifact_alias', type=str, default="latest", help='version of dataset artifact to be used')
     parser.add_argument('--freeze', nargs='+', type=int, default=[0], help='Freeze layers: backbone of yolov7=50, first3=0 1 2')
+    parser.add_argument('--no-augmentation', action='store_true', help='Do not augment training data')
     parser.add_argument('--v5-metric', action='store_true', help='assume maximum recall as 1.0 in AP calculation')
-
     parser.add_argument("--albumentations_probability", type=float, default=0.01,
                         help="Probability to apply data augmentation based on the albumentations package.")
+    parser.add_argument("--export-training-images", type=str, default="",
+                        help="Folder where to export the (augmented) training images to.")
+    parser.add_argument("--no-mosaic-augmentation", action='store_true',
+                        help="Do not apply mosaic augmentation.")
+
 
     opt = parser.parse_args()
 
