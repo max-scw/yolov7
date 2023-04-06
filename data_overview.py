@@ -2,7 +2,7 @@ import pathlib as pl
 
 import numpy as np
 import cv2 as cv
-from utils.plots import plot_one_box, plot_images
+from utils.plots import plot_images
 
 import math
 
@@ -10,7 +10,7 @@ import math
 if __name__ == "__main__":
     path_to_dataset_info = pl.Path("Trn.txt")
 
-    num_img_per_plot = 12
+    num_img_per_plot = 15
 
     # read file with paths to data for this dataset
     with open(path_to_dataset_info, "r") as fid:

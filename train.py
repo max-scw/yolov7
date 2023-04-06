@@ -366,7 +366,7 @@ def train(hyp, opt, device, tb_writer=None):
         for i, (imgs, targets, paths, _) in pbar:  # batch -------------------------------------------------------------
             if opt.export_training_images and Path(opt.export_training_images).is_dir():
                 p2fl = Path(opt.export_training_images) / f"{opt.name}_e{epoch}_b{i}.jpg"
-                plot_images(imgs, targets, fname=p2fl, max_subplots=opt.batch_size)
+                plot_images(imgs, targets, fname=p2fl, max_subplots=opt.batch_size, aspect_ratio=16/9)
 
             ni = i + n_batches * epoch  # number integrated batches (since train start)
             imgs = imgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
@@ -608,7 +608,27 @@ if __name__ == '__main__':
 
 
     opt = parser.parse_args()
+    # KEYPOINTS
+    # TODO: keypoint anchors: uniform distribution np.random.random((n_anchors, 2))
+    # opt.data = "data/keypoints.custom.yaml"  # FIXME: delete
+    # opt.cfg = "cfg/training/yolov7-tiny-kpt.yaml"  # FIXME: delete
+    # opt.name = "TEST_tiny-yolo7-kpt"  # FIXME: delete
+    # opt.no_augmentation = True    # FIXME: delete
 
+    # BOUNDING BOXES
+    opt.data = "data/CNN4VIAB.yaml"  # FIXME: delete
+    opt.cfg = "cfg/training/yolov7-tiny.yaml"  # FIXME: delete
+    opt.name = "TEST_tiny-yolo7"  # FIXME: delete
+
+    opt.hyp = "data/hyp.scratch.custom.yaml"
+    opt.weights = "trained_models/yolov7-tiny.pt"  # FIXME: delete
+    opt.albumentations_probability = 0.3  # FIXME: delete
+    opt.epochs = 1000  # FIXME: delete
+    # opt.evolve = True  # FIXME: delete
+    # opt.hyp = "data/hyp.scratch.tiny.yaml"  # FIXME: delete
+    # opt.adam = True  # FIXME: delete
+    opt.save_period = 25    # FIXME: delete
+    opt.export_training_images = "tmp"    # FIXME: delete
     print_debug_msg(f"parser opt={opt}")
 
     # Set DDP variables
