@@ -52,7 +52,7 @@ class Log:
 
     def __init__(self, filename: Union[str, Path] = None, print_message: bool = False, level=logging.INFO):
         if filename:
-            if isinstance(filename, (Log, None)):
+            if isinstance(filename, Log) or filename is None:
                 self._filename = filename
             elif isinstance(filename, (str, Path)):
                 self._filename = Path(filename).with_suffix(".log")

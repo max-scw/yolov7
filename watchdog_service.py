@@ -55,8 +55,9 @@ class Handler(FileSystemEventHandler):
         self._log.log("New startup...")
         self._log.log(f"#boxes,{','.join(self.model.names)},path")
         # opencv window name
-        self.window_name = "Inference YOLOv7: " + Path(path_to_weights).stem
+        self.__window_name = "Inference YOLOv7: " + Path(path_to_weights).stem
         print("Eventhandler initialized.")
+        self.__imgs_to_del = []
 
     def on_created(self, event):
         event_path = Path(event.src_path)
@@ -64,6 +65,11 @@ class Handler(FileSystemEventHandler):
             return None
 
         elif event.event_type == 'created':
+            # event_path.unlink()
+            for i in range(len(self.__imgs_to_del)):
+                p2img = self.__imgs_to_del.pop()
+                Path(p2img).unlink()
+
             print(f"Watchdog received created event - {event_path.as_posix()}")
             if event_path.suffix not in [".bmp", ".jpg", ".png"]:
                 return None
@@ -79,12 +85,12 @@ class Handler(FileSystemEventHandler):
             xyxy, scores, classes = x
             if len(classes) == 0:
                 # delete image if no box was detected
-                event_path.unlink()
+                self.__imgs_to_del.append(event_path)
             else:
                 class_count = ",".join([str(classes.count(i)) for i in range(self.model.n_classes)])
                 # log result
                 msg = f"{len(classes)},{class_count},{event_path.as_posix()}"
-                self._log.log()
+                self._log.log(msg)
 
 
 if __name__ == "__main__":
