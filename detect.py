@@ -2,7 +2,7 @@ import argparse
 import time
 from pathlib import Path
 
-import cv2
+import cv2 as cv
 import numpy as np
 import torch
 import torch.backends.cudnn as cudnn
@@ -40,6 +40,7 @@ def detect(opt):
     model = attempt_load(weights, map_location=device)  # load FP32 model
     stride = int(model.stride.max())  # model stride
     imgsz = check_img_size(imgsz, s=stride)  # check img_size
+    print_debug_msg(f"imgsz={imgsz}")
 
     if trace:
         model = TracedModel(model, device, opt.img_size)
@@ -96,7 +97,8 @@ def detect(opt):
 
         # Apply NMS
         print_debug_msg(f"conf_thres={opt.conf_thres}, iou_thres={opt.iou_thres}, classes={opt.classes}, agnostic_nms={opt.agnostic_nms}")
-        pred = non_max_suppression(pred, opt.conf_thres, opt.iou_thres, classes=opt.classes, agnostic=opt.agnostic_nms)
+        pred2 = non_max_suppression(pred, opt.conf_thres, opt.iou_thres, classes=opt.classes, agnostic=opt.agnostic_nms)
+        pred = pred2
         t3 = time_synchronized()
 
         # Apply Classifier
@@ -140,27 +142,27 @@ def detect(opt):
 
             # Stream results
             if view_img:
-                cv2.imshow(str(p), im0)
-                cv2.waitKey(1)  # 1 millisecond
+                cv.imshow(str(p), im0)
+                cv.waitKey(1)  # 1 millisecond
 
             # Save results (image with detections)
             if save_img:
                 if dataset.mode == 'image':
-                    cv2.imwrite(save_path, im0)
+                    cv.imwrite(save_path, im0)
                     print(f" The image with the result is saved in: {save_path}")
                 else:  # 'video' or 'stream'
                     if vid_path != save_path:  # new video
                         vid_path = save_path
-                        if isinstance(vid_writer, cv2.VideoWriter):
+                        if isinstance(vid_writer, cv.VideoWriter):
                             vid_writer.release()  # release previous video writer
                         if vid_cap:  # video
-                            fps = vid_cap.get(cv2.CAP_PROP_FPS)
-                            w = int(vid_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                            h = int(vid_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                            fps = vid_cap.get(cv.CAP_PROP_FPS)
+                            w = int(vid_cap.get(cv.CAP_PROP_FRAME_WIDTH))
+                            h = int(vid_cap.get(cv.CAP_PROP_FRAME_HEIGHT))
                         else:  # stream
                             fps, w, h = 30, im0.shape[1], im0.shape[0]
                             save_path += '.mp4'
-                        vid_writer = cv2.VideoWriter(save_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
+                        vid_writer = cv.VideoWriter(save_path, cv.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
                     vid_writer.write(im0)
 
     if save_txt or save_img:
@@ -200,6 +202,10 @@ class Inference:
         return self.model.module.names if hasattr(self.model, 'module') else self.model.names
 
     @property
+    def n_classes(self) -> int:
+        return len(self.names)
+
+    @property
     def colors(self) -> list:
         if self.__colors is None:
             self.__colors = [[random.randint(0, 255) for _ in range(3)] for _ in self.names]
@@ -207,7 +213,7 @@ class Inference:
 
     def _prepare_image(self, image: np.ndarray) -> np.ndarray:
         # Padded resize
-        img_pad = letterbox(image, self.imgsz, stride=self.stride)[0]
+        img_pad = letterbox(image, new_shape=self.imgsz, stride=self.stride)[0]
         # Convert
         img_pad = img_pad[:, :, ::-1].transpose(2, 0, 1)  # bring color channels to front # BGR2RGB
         img_pad = np.ascontiguousarray(img_pad)
@@ -300,8 +306,8 @@ class Inference:
             plot_one_box(xyxy, image, label=label, color=color, line_thickness=line_thickness)
 
         if show_img:
-            cv2.imshow("YOLOv7 Inference", image)
-            cv2.waitKey(2)  # 1 millisecond
+            cv.imshow("YOLOv7 Inference", image)
+            cv.waitKey(2)  # 1 millisecond
         return True
 
 
@@ -327,25 +333,35 @@ if __name__ == '__main__':
     parser.add_argument('--no-trace', action='store_true', help='don`t trace model')
     opt = parser.parse_args()
     print(opt)
-    #check_requirements(exclude=('pycocotools', 'thop'))
 
-    with torch.no_grad():
-        if opt.update:  # update all models (to fix SourceChangeWarning)
-            for opt.weights in ['yolov7.pt']:
-                detect(opt)
-                strip_optimizer(opt.weights)
-        else:
-            detect(opt)
+    # with torch.no_grad():
+    #     if opt.update:  # update all models (to fix SourceChangeWarning)
+    #         for opt.weights in ['yolov7.pt']:
+    #             detect(opt)
+    #             strip_optimizer(opt.weights)
+    #     else:
+    #         detect(opt)
 
-    # img_size = 640
-    # stride = 32
-    # image_cv = cv2.imread("dataset/Tst/220808_154403_0000000008_CAM1_NORMAL_NG.bmp", cv2.IMREAD_COLOR)
-    #
-    # print("____class____")
-    # mdl = Inference(weights=r"tiny-best.pt",
-    #                 imgsz=img_size,
-    #                 colors=[[45, 66, 117], [40, 185, 218]]
-    #                 )
-    # for i in range(3):
-    #     x = mdl.predict(image_cv, conf_thres=0.8)
-    #     mdl.plot_box(image_cv.copy(), *x, show_img=True, bgr2rgb=True)
+
+
+    img_size = 640
+    stride = 32
+    # read file pointing to testing data
+    with open("Tst.txt", "r") as fid:
+        lines = fid.readlines()
+    # convert relevant paths to pathlib object
+    images = [Path(ln.strip("\n")) for ln in lines if len(ln) > 5]
+
+    print("____class____")
+    mdl = Inference(weights=Path("trained_models") / "2023-03-28_tiny-yolov7-CNN4VIAB640x640-scratch.pt",
+                    imgsz=img_size,
+                    # colors=[[45, 66, 117], [40, 185, 218]]
+                    )
+    for p2img in images:
+        # read one image
+        img = cv.imread(p2img.as_posix(), cv.IMREAD_COLOR)
+        x = mdl.predict(img, conf_thres=0.65)
+
+        mdl.plot_box(img.copy(), *x, show_img=True, bgr2rgb=True)
+        cv.waitKey(5)  # 1 millisecond
+        break
