@@ -639,16 +639,19 @@ class ComputeLossOTA:
         
         #indices, anch = self.find_positive(p, targets)
         indices, anch = self.find_3_positive(p, targets)
+        indices_test, anch_test = self.find_3_positive_FIXME(p, targets)  # FIXME: delete
+        assert all([all(y[0] == y[1]) for x in zip(indices, indices_test) for y in zip(*x)])
+        assert all([all(y[0] == y[1]) for x in zip(anch, anch_test) for y in zip(*x)])
         #indices, anch = self.find_4_positive(p, targets)
         #indices, anch = self.find_5_positive(p, targets)
         #indices, anch = self.find_9_positive(p, targets)
 
-        matching_bs = [[] for pp in p]
-        matching_as = [[] for pp in p]
-        matching_gjs = [[] for pp in p]
-        matching_gis = [[] for pp in p]
-        matching_targets = [[] for pp in p]
-        matching_anchs = [[] for pp in p]
+        matching_bs = [[] for _ in p]
+        matching_as = [[] for _ in p]
+        matching_gjs = [[] for _ in p]
+        matching_gis = [[] for _ in p]
+        matching_targets = [[] for _ in p]
+        matching_anchs = [[] for _ in p]
         
         nl = len(p)    
     
@@ -730,7 +733,7 @@ class ComputeLossOTA:
 
             y = cls_preds_.sqrt_()
             pair_wise_cls_loss = F.binary_cross_entropy_with_logits(
-               torch.log(y/(1-y)) , gt_cls_per_image, reduction="none"
+               torch.log(y/(1-y)), gt_cls_per_image, reduction="none"
             ).sum(-1)
             del cls_preds_
         
@@ -790,9 +793,9 @@ class ComputeLossOTA:
                 matching_targets[i] = torch.tensor([], device='cuda:0', dtype=torch.int64)
                 matching_anchs[i] = torch.tensor([], device='cuda:0', dtype=torch.int64)
 
-        return matching_bs, matching_as, matching_gjs, matching_gis, matching_targets, matching_anchs           
+        return matching_bs, matching_as, matching_gjs, matching_gis, matching_targets, matching_anchs
 
-    def find_3_positive(self, p, targets):
+    def find_3_positive_FIXME(self, p, targets):
         # Build targets for compute_loss(), input targets(image,class,x,y,w,h)
         na, nt = self.na, targets.shape[0]  # number of anchors, targets
         indices, anch = [], []
@@ -844,7 +847,110 @@ class ComputeLossOTA:
             anch.append(anchors[a])  # anchors
 
         return indices, anch
-    
+
+    def find_3_positive(self, p, targets):
+        sz_label = targets.shape[1]
+        if sz_label == 6:
+            # bounding-boxes as target: (image in batch,class,x,y,w,h)
+            n_xy = 1
+            n_wh = 1
+            idx_xy = [2, 3]  # ignore w, h
+            idx_wh = [4, 5]
+            idx_xywh = idx_xy + idx_wh
+            filter_matches = True
+            is_keypoint = False
+        elif sz_label % 3 == 1:
+            # keypoints as target: (image in batch,x,y,visibility, x,y,visibility, ...)
+            n_xy = sz_label // 3
+            n_wh = 0
+            # process targets if it is keypoints (strip visibility)  # TODO: only if visibility == 2?!
+            idx_xy = [x for i in range(n_xy) for x in (3 * i + 1, 3 * i + 2)]
+            idx_wh = idx_xy  # []
+            idx_xywh = idx_xy
+            filter_matches = False
+            is_keypoint = True
+        else:
+            raise ValueError("Unexpected shape of the targets. N0 bounding-box nor keyoints.")
+
+        # Build targets for compute_loss(), input targets(image,class,x,y,w,h)
+        n_anchors = self.na  # number of anchors
+        n_targets = targets.shape[0]  # number of targets
+        indices, anch = [], []
+        # initialize union gain (i.e. [1, 1, 1, ...])
+        gain = torch.ones(sz_label + 1, device=targets.device).long()  # normalized to grid-space gain
+
+        # initialize indices for anchors as matrix for later reshaping:
+        # anchor_indices = [[0, 0, 0, ... * n_targets],
+        #                   [1, 1, 1, ... * n_targets],
+        #                   ... * n_anchors
+        #                  ]
+        anchor_indices = torch.arange(n_anchors, device=targets.device).float().view(n_anchors, 1).repeat(1, n_targets)  # same as .repeat_interleave(nt)
+
+        # append anchor_indices as element to each element oftargets
+        targets = torch.cat((targets.repeat(n_anchors, 1, 1), anchor_indices[:, :, None]), 2)  # append anchor indices
+        # targets (bounding-box):   (batch, class, x, y, w, h, anchor) = 2 + 5
+        # targets (keypoints):      (batch, [x1, y1, v1], ..., anchor) = 2 + 3 * n_keypoints
+
+        g = 0.5  # bias
+        # FIXME: What offset is this? from center coordinates to corner coordinates?
+        off = torch.tensor([[0, 0],
+                            [1, 0], [0, 1], [-1, 0], [0, -1],  # j,k,l,m
+                            # [1, 1], [1, -1], [-1, 1], [-1, -1],  # jk,jm,lk,lm
+                            ], device=targets.device).float() * g  # offsets
+
+        for i in range(self.nl):  # number of (scaling) levels / model heads in model prediction 'p'
+            anchors = self.anchors[i]  #(3,2)
+            # gain: override / initialize everything related to coordinates ... FIXME: which shape information????
+            gain[idx_xywh] = torch.tensor(p[i].shape)[[3, 2] * (n_xy + n_wh)]  # xyxy gain  (7,)
+            # p[0].shape = torch.Size([6, 3, 80, 80, 13]) (for bounding-boxes as well as for keypoints)
+            # p[1].shape = torch.Size([6, 3, 40, 40, 13])
+            # p[2].shape = torch.Size([6, 3, 20, 20, 13])
+
+            # Match targets to anchors
+            t = targets * gain  # (3,162,7)
+            if n_targets:
+                # filter Matches #TODO: how are anchors for keypoints? wh?
+                if filter_matches:
+                    r = t[:, :, idx_wh] / anchors.repeat(1, n_xy)[:, None]  # wh ratio (3,162,2)
+                    j = torch.max(r, 1. / r).max(dim=2)[0] < self.hyp['anchor_t']  # compare (3,162)
+                    # j = wh_iou(anchors, t[:, 4:6]) > model.hyp['iou_t']  # iou(3,n)=wh_iou(anchors(3,2), gwh(n,2))
+                else:
+                    j = torch.full(targets.shape[:2], True)
+                # filter anchors / matches
+                t = t[j]  # filter (352,7)
+
+                # Offsets # FIXME: what offsets?
+                if not is_keypoint:
+                    gxy = t[:, idx_xy]  # grid xy  (170,2 = n_xy?)
+                    gxi = gain[idx_xy] - gxy  # inverse
+                    jk = ((gxy % 1. < g) & (gxy > 1.)).T
+                    lm = ((gxi % 1. < g) & (gxi > 1.)).T
+                    j = torch.stack((torch.ones_like(jk[0]), *[el for el in jk], *[el for el in lm]))
+                    assert j.shape[0] == (sz_label - 1)
+                    t = t.repeat((j.shape[0], 1, 1))[j]
+                    offsets = (torch.zeros_like(gxy)[None] + off[:, None])[j]
+                else:
+                    # no offset for keypoints as they are always corner coordinates
+                    offsets = 0
+            else:
+                t = targets[0]
+                offsets = 0
+
+            # Define
+            gxy = t[:, idx_xy]  # grid xy
+            # gwh = t[:, idx_wh]  # grid wh
+            gij = (gxy - offsets).long()
+            gi, gj = gij.T  # grid xy indices  # FIXME: more than 2 if keypoints
+
+            # Append
+            b = t[:, 0].long().T  # image/batch,
+            idx_anchor = t[:, -1].long()  # anchor indices
+            indices.append((b, idx_anchor, gj.clamp_(0, gain[3] - 1), gi.clamp_(0, gain[2] - 1)))  # image, anchor, grid indices
+            anch.append(anchors[idx_anchor])  # anchors
+
+        return indices, anch
+
+
 
 class ComputeLossBinOTA:
     # Compute losses
@@ -959,7 +1065,6 @@ class ComputeLossBinOTA:
         return loss * bs, torch.cat((lbox, lobj, lcls, loss)).detach()
 
     def build_targets(self, p, targets, imgs):
-        
         #indices, anch = self.find_positive(p, targets)
         indices, anch = self.find_3_positive(p, targets)
         #indices, anch = self.find_4_positive(p, targets)

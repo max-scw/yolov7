@@ -759,6 +759,8 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                 segments = [xyn2xy(x, w, h, padw, padh) for x in segments]
         elif sz_lbl % 3 == 0:
             # keypoints
+            n_kpt = sz_lbl // 3
+            assert self.n_kpt == n_kpt
             offset = [padw, padh] * self.n_kpt
             img_size = [w, h] * self.n_kpt
             labels[:, self.idx_c] = labels[:, self.idx_c] * img_size + offset
