@@ -557,7 +557,7 @@ class ComputeLoss:
 
 class ComputeLossOTA:
     # Compute losses
-    def __init__(self, model, autobalance=False):
+    def __init__(self, model, autobalance:bool = False):
         super(ComputeLossOTA, self).__init__()
         device = next(model.parameters()).device  # get model device
         h = model.hyp  # hyperparameters
@@ -638,16 +638,9 @@ class ComputeLossOTA:
         return loss * bs, torch.cat((lbox, lobj, lcls, loss)).detach()
 
     def build_targets(self, p, targets, imgs):
-        
-        #indices, anch = self.find_positive(p, targets)
         indices, anch = self.find_3_positive(p, targets)
-        indices_test, anch_test = self.find_3_positive_old_FIXME(p, targets)  # FIXME: delete
-        assert all([all(y[0] == y[1]) for x in zip(indices, indices_test) for y in zip(*x)])
-        assert all([all(y[0] == y[1]) for x in zip(anch, anch_test) for y in zip(*x)])
-        #indices, anch = self.find_4_positive(p, targets)
-        #indices, anch = self.find_5_positive(p, targets)
-        #indices, anch = self.find_9_positive(p, targets)
 
+        # initialize
         matching_bs = [[] for _ in p]
         matching_as = [[] for _ in p]
         matching_gjs = [[] for _ in p]
@@ -658,8 +651,7 @@ class ComputeLossOTA:
         nl = len(p)    
     
         for batch_idx in range(p[0].shape[0]):
-        
-            b_idx = targets[:, 0]==batch_idx
+            b_idx = targets[:, 0] == batch_idx
             this_target = targets[b_idx]
             if this_target.shape[0] == 0:
                 continue
@@ -678,7 +670,6 @@ class ComputeLossOTA:
             all_anch = []
             
             for i, pi in enumerate(p):
-                
                 b, a, gj, gi = indices[i]
                 idx = (b == batch_idx)
                 b, a, gj, gi = b[idx], a[idx], gj[idx], gi[idx]                
@@ -735,7 +726,9 @@ class ComputeLossOTA:
 
             y = cls_preds_.sqrt_()
             pair_wise_cls_loss = F.binary_cross_entropy_with_logits(
-               torch.log(y/(1-y)), gt_cls_per_image, reduction="none"
+                torch.log(y/(1-y)),
+                gt_cls_per_image,
+                reduction="none"
             ).sum(-1)
             del cls_preds_
         
@@ -747,9 +740,10 @@ class ComputeLossOTA:
             matching_matrix = torch.zeros_like(cost)
 
             for gt_idx in range(num_gt):
-                _, pos_idx = torch.topk(
-                    cost[gt_idx], k=dynamic_ks[gt_idx].item(), largest=False
-                )
+                _, pos_idx = torch.topk(cost[gt_idx],
+                                        k=dynamic_ks[gt_idx].item(),
+                                        largest=False
+                                        )
                 matching_matrix[gt_idx][pos_idx] = 1.0
 
             del top_k, dynamic_ks
@@ -797,60 +791,6 @@ class ComputeLossOTA:
 
         return matching_bs, matching_as, matching_gjs, matching_gis, matching_targets, matching_anchs
 
-    def find_3_positive_old_FIXME(self, p, targets):
-        # FIXME: delete... only to check if it produces the exact same result as the changed version
-        # Build targets for compute_loss(), input targets(image,class,x,y,w,h)
-        na, nt = self.na, targets.shape[0]  # number of anchors, targets
-        indices, anch = [], []
-        gain = torch.ones(7, device=targets.device).long()  # normalized to gridspace gain
-        ai = torch.arange(na, device=targets.device).float().view(na, 1).repeat(1, nt)  # same as .repeat_interleave(nt)
-        targets = torch.cat((targets.repeat(na, 1, 1), ai[:, :, None]), 2)  # append anchor indices
-
-        g = 0.5  # bias
-        off = torch.tensor([[0, 0],
-                            [1, 0], [0, 1], [-1, 0], [0, -1],  # j,k,l,m
-                            # [1, 1], [1, -1], [-1, 1], [-1, -1],  # jk,jm,lk,lm
-                            ], device=targets.device).float() * g  # offsets
-
-        for i in range(self.nl):
-            anchors = self.anchors[i]
-            gain[2:6] = torch.tensor(p[i].shape)[[3, 2, 3, 2]]  # xyxy gain
-
-            # Match targets to anchors
-            t = targets * gain
-            if nt:
-                # Matches
-                r = t[:, :, 4:6] / anchors[:, None]  # wh ratio
-                j = torch.max(r, 1. / r).max(2)[0] < self.hyp['anchor_t']  # compare
-                # j = wh_iou(anchors, t[:, 4:6]) > model.hyp['iou_t']  # iou(3,n)=wh_iou(anchors(3,2), gwh(n,2))
-                t = t[j]  # filter
-
-                # Offsets
-                gxy = t[:, 2:4]  # grid xy
-                gxi = gain[[2, 3]] - gxy  # inverse
-                j, k = ((gxy % 1. < g) & (gxy > 1.)).T
-                l, m = ((gxi % 1. < g) & (gxi > 1.)).T
-                j = torch.stack((torch.ones_like(j), j, k, l, m))
-                t = t.repeat((5, 1, 1))[j]
-                offsets = (torch.zeros_like(gxy)[None] + off[:, None])[j]
-            else:
-                t = targets[0]
-                offsets = 0
-
-            # Define
-            b, c = t[:, :2].long().T  # image, class
-            gxy = t[:, 2:4]  # grid xy
-            gwh = t[:, 4:6]  # grid wh
-            gij = (gxy - offsets).long()
-            gi, gj = gij.T  # grid xy indices
-
-            # Append
-            a = t[:, 6].long()  # anchor indices
-            indices.append((b, a, gj.clamp_(0, gain[3] - 1), gi.clamp_(0, gain[2] - 1)))  # image, anchor, grid indices
-            anch.append(anchors[a])  # anchors
-
-        return indices, anch
-
     def find_3_positive(self, p, targets):
         # check label size, expecting bounding box or bounding box + keypoints
         sz_label = targets.shape[1]
@@ -859,7 +799,7 @@ class ComputeLossOTA:
         sz_label_bbox = 6
         # keypoints as target:
         # (image in batch, class, x, y, w, h, k1x, k1y, k1visibility, ...)
-        assert (sz_label > sz_label_bbox and sz_label % 3 == 0), "Unexpected shape of the targets. N0 bounding-box nor keyoints."
+        assert (sz_label >= sz_label_bbox and sz_label % 3 == 0), "Unexpected shape of the targets. N0 bounding-box nor keyoints."
 
         idx_xy = [2, 3]  # coordinates (relative)
         idx_wh = [4, 5]  # width / height of bounding boxes
@@ -1019,9 +959,6 @@ class ComputeLossBinOTA:
 
                 pbox = torch.cat((px.unsqueeze(1), py.unsqueeze(1), pw.unsqueeze(1), ph.unsqueeze(1)), 1).to(device)  # predicted box
 
-                
-                
-                
                 iou = bbox_iou(pbox.T, selected_tbox, x1y1x2y2=False, CIoU=True)  # iou(prediction, target)
                 lbox += (1.0 - iou).mean()  # iou loss
 
@@ -1055,23 +992,18 @@ class ComputeLossBinOTA:
         return loss * bs, torch.cat((lbox, lobj, lcls, loss)).detach()
 
     def build_targets(self, p, targets, imgs):
-        #indices, anch = self.find_positive(p, targets)
         indices, anch = self.find_3_positive(p, targets)
-        #indices, anch = self.find_4_positive(p, targets)
-        #indices, anch = self.find_5_positive(p, targets)
-        #indices, anch = self.find_9_positive(p, targets)
 
-        matching_bs = [[] for pp in p]
-        matching_as = [[] for pp in p]
-        matching_gjs = [[] for pp in p]
-        matching_gis = [[] for pp in p]
-        matching_targets = [[] for pp in p]
-        matching_anchs = [[] for pp in p]
+        matching_bs = [[] for _ in p]
+        matching_as = [[] for _ in p]
+        matching_gjs = [[] for _ in p]
+        matching_gis = [[] for _ in p]
+        matching_targets = [[] for _ in p]
+        matching_anchs = [[] for _ in p]
         
         nl = len(p)    
     
         for batch_idx in range(p[0].shape[0]):
-        
             b_idx = targets[:, 0]==batch_idx
             this_target = targets[b_idx]
             if this_target.shape[0] == 0:
@@ -1152,7 +1084,9 @@ class ComputeLossBinOTA:
 
             y = cls_preds_.sqrt_()
             pair_wise_cls_loss = F.binary_cross_entropy_with_logits(
-               torch.log(y/(1-y)) , gt_cls_per_image, reduction="none"
+               torch.log(y/(1-y)),
+                gt_cls_per_image,
+                reduction="none"
             ).sum(-1)
             del cls_preds_
         
@@ -1164,9 +1098,10 @@ class ComputeLossBinOTA:
             matching_matrix = torch.zeros_like(cost)
 
             for gt_idx in range(num_gt):
-                _, pos_idx = torch.topk(
-                    cost[gt_idx], k=dynamic_ks[gt_idx].item(), largest=False
-                )
+                _, pos_idx = torch.topk(cost[gt_idx],
+                                        k=dynamic_ks[gt_idx].item(),
+                                        largest=False
+                                        )
                 matching_matrix[gt_idx][pos_idx] = 1.0
 
             del top_k, dynamic_ks
