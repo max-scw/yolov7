@@ -374,7 +374,7 @@ def train(hyp, opt, device, tb_writer=None):
                 path_to_export = Path(opt.export_training_images) / opt.name
                 if not path_to_export.is_dir():
                     path_to_export.mkdir()
-                    print_debug_msg(f"Directory created to export (augmented) training batches: {p2fl.as_posix()}")
+                    print_debug_msg(f"Directory created to export (augmented) training batches: {path_to_export.as_posix()}")
                 p2fl = path_to_export / f"{opt.name}_e{epoch}_b{i}.jpg"
                 print_debug_msg(f"{p2fl.as_posix()}: {imgs.shape}")
                 plot_images(imgs, targets, fname=p2fl.as_posix(), max_subplots=opt.batch_size, aspect_ratio=16/9)
@@ -609,7 +609,7 @@ if __name__ == '__main__':
     parser.add_argument('--v5-metric', action='store_true', help='assume maximum recall as 1.0 in AP calculation')
     parser.add_argument("--albumentations_probability", type=float, default=0.01,
                         help="Probability to apply data augmentation based on the albumentations package.")
-    parser.add_argument("--export-training-images", type=str, default="VisualizationTools",
+    parser.add_argument("--export-training-images", type=str, default="",
                         help="Folder where to export the (augmented) training images to.")
     parser.add_argument("--no-mosaic-augmentation", action='store_true',
                         help="Do not apply mosaic augmentation.")
