@@ -46,8 +46,13 @@ logger = logging.getLogger(__name__)
 
 def train(hyp, opt, device, tb_writer=None):
     logger.info(colorstr('hyperparameters: ') + ', '.join(f'{k}={v}' for k, v in hyp.items()))
-    save_dir, epochs, batch_size, total_batch_size, weights, rank, freeze = \
-        Path(opt.save_dir), opt.epochs, opt.batch_size, opt.total_batch_size, opt.weights, opt.global_rank, opt.freeze
+    save_dir = Path(opt.save_dir)
+    epochs = opt.epochs
+    batch_size = opt.batch_size
+    total_batch_size = opt.total_batch_size
+    weights = opt.weights
+    rank = opt.global_rank
+    freeze = opt.freeze
 
     # Directories
     wdir = save_dir / 'weights'
@@ -110,7 +115,8 @@ def train(hyp, opt, device, tb_writer=None):
     test_path = data_dict['val']
 
     # Freeze
-    freeze = [f'model.{x}.' for x in (freeze if len(freeze) > 1 else range(freeze[0]))]  # parameter names to freeze (full or partial)
+    # parameter names to freeze (full or partial)
+    freeze = [f'model.{x}.' for x in (freeze if len(freeze) > 1 else range(freeze[0]))]
     for k, v in model.named_parameters():
         v.requires_grad = True  # train all layers
         if any(x in k for x in freeze):
@@ -365,8 +371,13 @@ def train(hyp, opt, device, tb_writer=None):
         optimizer.zero_grad()
         for i, (imgs, targets, paths, _) in pbar:  # batch -------------------------------------------------------------
             if opt.export_training_images and Path(opt.export_training_images).is_dir():
-                p2fl = Path(opt.export_training_images) / f"{opt.name}_e{epoch}_b{i}.jpg"
-                plot_images(imgs, targets, fname=p2fl, max_subplots=opt.batch_size, aspect_ratio=16/9)
+                path_to_export = Path(opt.export_training_images) / opt.name
+                if not path_to_export.is_dir():
+                    path_to_export.mkdir()
+                    print_debug_msg(f"Directory created to export (augmented) training batches: {p2fl.as_posix()}")
+                p2fl = path_to_export / f"{opt.name}_e{epoch}_b{i}.jpg"
+                print_debug_msg(f"{p2fl.as_posix()}: {imgs.shape}")
+                plot_images(imgs, targets, fname=p2fl.as_posix(), max_subplots=opt.batch_size, aspect_ratio=16/9)
 
             ni = i + n_batches * epoch  # number integrated batches (since train start)
             imgs = imgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
@@ -503,9 +514,9 @@ def train(hyp, opt, device, tb_writer=None):
                     torch.save(ckpt, wdir / 'best_{:03d}.pt'.format(epoch))
                 if epoch == 0:
                     torch.save(ckpt, wdir / 'epoch_{:03d}.pt'.format(epoch))
-                elif ((epoch+1) % 25) == 0:
+                elif ((epoch + 1) % opt.save_period) == 0:
                     torch.save(ckpt, wdir / 'epoch_{:03d}.pt'.format(epoch))
-                elif epoch >= (epochs-5):
+                elif epoch >= (epochs - 5):
                     torch.save(ckpt, wdir / 'epoch_{:03d}.pt'.format(epoch))
                 # if wandb_logger.wandb:
                 #     if ((epoch + 1) % opt.save_period == 0 and not final_epoch) and opt.save_period != -1:
@@ -592,43 +603,19 @@ if __name__ == '__main__':
     parser.add_argument('--quad', action='store_true', help='quad dataloader')
     parser.add_argument('--linear-lr', action='store_true', help='linear LR')
     parser.add_argument('--label-smoothing', type=float, default=0.0, help='Label smoothing epsilon')
-    # parser.add_argument('--upload_dataset', action='store_true', help='Upload dataset as W&B artifact table')
-    # parser.add_argument('--bbox_interval', type=int, default=-1, help='Set bounding-box image logging interval for W&B')
     parser.add_argument('--save_period', type=int, default=-1, help='Log model after every "save_period" epoch')
-    # parser.add_argument('--artifact_alias', type=str, default="latest", help='version of dataset artifact to be used')
     parser.add_argument('--freeze', nargs='+', type=int, default=[0], help='Freeze layers: backbone of yolov7=50, first3=0 1 2')
     parser.add_argument('--no-augmentation', action='store_true', help='Do not augment training data')
     parser.add_argument('--v5-metric', action='store_true', help='assume maximum recall as 1.0 in AP calculation')
     parser.add_argument("--albumentations_probability", type=float, default=0.01,
                         help="Probability to apply data augmentation based on the albumentations package.")
-    parser.add_argument("--export-training-images", type=str, default="",
+    parser.add_argument("--export-training-images", type=str, default="VisualizationTools",
                         help="Folder where to export the (augmented) training images to.")
     parser.add_argument("--no-mosaic-augmentation", action='store_true',
                         help="Do not apply mosaic augmentation.")
 
-
     opt = parser.parse_args()
-    # KEYPOINTS
-    # TODO: keypoint anchors: uniform distribution np.random.random((n_anchors, 2))
-    # opt.data = "data/keypoints.custom.yaml"  # FIXME: delete
-    # opt.cfg = "cfg/training/yolov7-tiny-kpt.yaml"  # FIXME: delete
-    # opt.name = "TEST_tiny-yolo7-kpt"  # FIXME: delete
-    # opt.no_augmentation = True    # FIXME: delete
 
-    # BOUNDING BOXES
-    opt.data = "data/CNN4VIAB.yaml"  # FIXME: delete
-    opt.cfg = "cfg/training/yolov7-tiny.yaml"  # FIXME: delete
-    opt.name = "TEST_tiny-yolo7"  # FIXME: delete
-
-    opt.hyp = "data/hyp.scratch.custom.yaml"
-    opt.weights = "trained_models/yolov7-tiny.pt"  # FIXME: delete
-    opt.albumentations_probability = 0.3  # FIXME: delete
-    opt.epochs = 1000  # FIXME: delete
-    # opt.evolve = True  # FIXME: delete
-    # opt.hyp = "data/hyp.scratch.tiny.yaml"  # FIXME: delete
-    # opt.adam = True  # FIXME: delete
-    opt.save_period = 25    # FIXME: delete
-    opt.export_training_images = "tmp"    # FIXME: delete
     print_debug_msg(f"parser opt={opt}")
 
     # Set DDP variables
@@ -642,8 +629,7 @@ if __name__ == '__main__':
         logging.info("Argument %s: %r", arg, value)
 
     # Resume
-    # wandb_run = check_wandb_resume(opt)
-    if opt.resume:  # and not wandb_run:  # resume an interrupted run
+    if opt.resume:  # resume an interrupted run
         ckpt = opt.resume if isinstance(opt.resume, str) else get_latest_run()  # specified or most recent path
         assert os.path.isfile(ckpt), 'ERROR: --resume checkpoint does not exist'
         apriori = opt.global_rank, opt.local_rank
