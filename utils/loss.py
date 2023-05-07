@@ -173,6 +173,7 @@ class QFocalLoss(nn.Module):
         else:  # 'none'
             return loss
 
+
 class RankSort(torch.autograd.Function):
     @staticmethod
     def forward(ctx, logits, targets, delta_RS=0.50, eps=1e-10): 
@@ -271,6 +272,7 @@ class RankSort(torch.autograd.Function):
     def backward(ctx, out_grad1, out_grad2):
         g1, =ctx.saved_tensors
         return g1*out_grad1, None, None, None
+
 
 class aLRPLoss(torch.autograd.Function):
     @staticmethod
@@ -639,7 +641,7 @@ class ComputeLossOTA:
         
         #indices, anch = self.find_positive(p, targets)
         indices, anch = self.find_3_positive(p, targets)
-        indices_test, anch_test = self.find_3_positive_FIXME(p, targets)  # FIXME: delete
+        indices_test, anch_test = self.find_3_positive_old_FIXME(p, targets)  # FIXME: delete
         assert all([all(y[0] == y[1]) for x in zip(indices, indices_test) for y in zip(*x)])
         assert all([all(y[0] == y[1]) for x in zip(anch, anch_test) for y in zip(*x)])
         #indices, anch = self.find_4_positive(p, targets)
@@ -796,6 +798,7 @@ class ComputeLossOTA:
         return matching_bs, matching_as, matching_gjs, matching_gis, matching_targets, matching_anchs
 
     def find_3_positive_old_FIXME(self, p, targets):
+        # FIXME: delete... only to check if it produces the exact same result as the changed version
         # Build targets for compute_loss(), input targets(image,class,x,y,w,h)
         na, nt = self.na, targets.shape[0]  # number of anchors, targets
         indices, anch = [], []
@@ -849,26 +852,18 @@ class ComputeLossOTA:
         return indices, anch
 
     def find_3_positive(self, p, targets):
+        # check label size, expecting bounding box or bounding box + keypoints
         sz_label = targets.shape[1]
+        # bounding-boxes as target:
+        # (image in batch, class, x, y, w, h)
+        sz_label_bbox = 6
+        # keypoints as target:
+        # (image in batch, class, x, y, w, h, k1x, k1y, k1visibility, ...)
+        assert (sz_label > sz_label_bbox and sz_label % 3 == 0), "Unexpected shape of the targets. N0 bounding-box nor keyoints."
 
         idx_xy = [2, 3]  # coordinates (relative)
         idx_wh = [4, 5]  # width / height of bounding boxes
         idx_xywh = idx_xy + idx_wh
-
-        if sz_label == 6:
-            # bounding-boxes as target:
-            # (image in batch, class, x, y, w, h)
-            pass
-        elif sz_label > 6 and sz_label % 3 == 0:
-            # keypoints as target:
-            # (image in batch, class, x, y, w, h, k1x, k1y, k1visibility, ...)
-
-            # number of keypoints
-            n_keypoints = (sz_label - 6) // 3
-            # process targets if it is keypoints (strip visibility)  # TODO: only if visibility == 2?!
-            # idx_xy += [x for i in range(n_keypoints) for x in (3 * i + 1, 3 * i + 2)]
-        else:
-            raise ValueError("Unexpected shape of the targets. N0 bounding-box nor keyoints.")
 
         # Build targets for compute_loss(), input targets(image, class, x, y, w, h)
         n_anchors = self.na  # number of anchors
@@ -891,7 +886,7 @@ class ComputeLossOTA:
         # targets (keypoints):      (batch, class, x, y, w, h, [x1, y1, v1], ..., anchor)   = 2 + 5 + 3 * n_keypoints
 
         g = 0.5  # bias
-        # FIXME: What offset is this? from center coordinates to corner coordinates?
+        # offset to anchor points
         off = torch.tensor([[0, 0],
                             [1, 0], [0, 1], [-1, 0], [0, -1],  # j,k,l,m
                             # [1, 1], [1, -1], [-1, 1], [-1, -1],  # jk,jm,lk,lm
@@ -899,7 +894,7 @@ class ComputeLossOTA:
 
         for i in range(self.nl):  # number of (scaling) levels / model heads in model prediction 'p'
             anchors = self.anchors[i]
-            # gain: override / initialize everything related to coordinates ... FIXME: which shape information????
+            # gain: override / initialize everything related to coordinates ...
             gain[idx_xywh] = torch.tensor(p[i].shape)[[3, 2] * (len(idx_xywh) // 2)]  # xyxy gain
             # p[0].shape = torch.Size([6, 3, 80, 80, 13]) (for bounding-boxes as well as for keypoints)
             # p[1].shape = torch.Size([6, 3, 40, 40, 13])
@@ -917,7 +912,7 @@ class ComputeLossOTA:
                 t = t[j]  # filter
 
                 # Offsets to grid cells
-                gxy = t[:, idx_xy]  # grid xy  (170,2 = n_xy?)
+                gxy = t[:, idx_xy]  # grid xy
                 gxi = gain[idx_xy] - gxy  # inverse
                 jk = ((gxy % 1. < g) & (gxy > 1.)).T
                 lm = ((gxi % 1. < g) & (gxi > 1.)).T
@@ -940,11 +935,11 @@ class ComputeLossOTA:
             # Append
             b = t[:, 0].long().T  # image/batch,
             idx_anchor = t[:, -1].long()  # anchor indices
-            indices.append((b, idx_anchor, gj.clamp_(0, gain[3] - 1), gi.clamp_(0, gain[2] - 1)))  # image, anchor, grid indices
+            # image/batch, best anchor, grid indices
+            indices.append((b, idx_anchor, gj.clamp_(0, gain[3] - 1), gi.clamp_(0, gain[2] - 1)))
             anch.append(anchors[idx_anchor])  # anchors
 
         return indices, anch
-
 
 
 class ComputeLossBinOTA:
