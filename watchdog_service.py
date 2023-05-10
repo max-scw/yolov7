@@ -95,25 +95,25 @@ class Handler(FileSystemEventHandler):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--weights', type=str, default='yolov7.pt', help='model.pt path')
-    parser.add_argument('--img-size', type=int, default=640, help='size of displayed image (in pixels)')
-    parser.add_argument('--conf-thres', type=float, default=0.25, help='object confidence threshold')
-    parser.add_argument('--iou-thres', type=float, default=0.45, help='IOU threshold for NMS')
+    parser.add_argument('--weights', type=str, default='yolov7.pt', help='Path to model weights')
+    parser.add_argument('--img-size', type=int, default=640, help='Size of displayed image (in pixels)')
+    parser.add_argument('--conf-thres', type=float, default=0.45, help='Object confidence threshold')
+    parser.add_argument('--iou-thres', type=float, default=0.55, help='IOU threshold for NMS')
+    parser.add_argument('--folder', type=str, default='ftp', help='Path to folder that should be watched for any changes')
 
     opt = parser.parse_args()
-    opt.weights = Path("trained_models") / "2023-03-28_tiny-yolov7-CNN4VIAB640x640-scratch.pt"
+
     print(opt)
 
-    folder_to_monitor = Path(r"C:\Users\schwmax\Downloads\FTP_ENTRYPOINT")
-    time_interval_s = 1  # second
+    time_interval_s = 0.5  # second
 
     event_handler_obj = Handler(path_to_weights=opt.weights,
                                 image_size2display=opt.img_size,
                                 th_score=opt.conf_thres,
                                 th_iou=opt.iou_thres,
-                                class_colors=[(137, 186, 23)] + [(255, 0, 0)] * 3, # (192, 0, 0)
+                                # class_colors=[(137, 186, 23)] + [(255, 0, 0)] * 3, # (192, 0, 0)
                                 path_to_result_log="results.log"
                                 )
-    watch = Watchmen(folder_to_monitor, event_handler_obj, time_interval_s)
+    watch = Watchmen(Path(opt.folder), event_handler_obj, time_interval_s)
     print("run watchdog...")
     watch.run()
