@@ -9,7 +9,7 @@ import shutil
 import time
 from itertools import repeat
 from multiprocessing.pool import ThreadPool
-import pathlib as pl
+from pathlib import Path
 from threading import Thread
 
 import cv2
@@ -47,10 +47,10 @@ for orientation in ExifTags.TAGS.keys():
         break
 
 
-def get_hash(files: List[Union[str, pl.Path]]) -> float:
+def get_hash(files: List[Union[str, Path]]) -> float:
     """Returns a single hash value of a list of files"""
     # ensure pathlib object
-    files = [pl.Path(fl) for fl in files]
+    files = [Path(fl) for fl in files]
     # sum file statistics
     return sum([fl.stat().st_mtime_ns + fl.stat().st_size for fl in files if fl.is_file()])
 
@@ -68,9 +68,6 @@ def exif_size(img: Image. Image) -> Tuple[int, int]:
         pass
 
     return s
-
-
-
 
 
 def create_dataloader(path, imgsz, batch_size, stride, opt,
@@ -159,7 +156,7 @@ class _RepeatSampler(object):
 
 class LoadImages:  # for inference
     def __init__(self, path, img_size=640, stride=32):
-        p = str(pl.Path(path).absolute())  # os-agnostic absolute path
+        p = str(Path(path).absolute())  # os-agnostic absolute path
         if '*' in p:
             files = sorted(glob.glob(p, recursive=True))  # glob
         elif os.path.isdir(p):
@@ -376,13 +373,13 @@ class LoadStreams:  # multiple IP or RTSP cameras
         return 0  # 1E12 frames = 32 streams at 30 FPS for 30 years
 
 
-def img2label_paths(img_paths) -> List[pl.Path]:
+def img2label_paths(img_paths) -> List[Path]:
     # Define label paths as a function of image paths
-    return [pl.Path(x).with_suffix('.txt') for x in img_paths]
+    return [Path(x).with_suffix('.txt') for x in img_paths]
 
 
 class LoadImagesAndLabels(Dataset):  # for training/testing
-    def __init__(self, path_to_data_info: Union[str, pl.Path],
+    def __init__(self, path_to_data_info: Union[str, Path],
                  img_size: int = 640,
                  batch_size: int = 16,
                  augment: bool = False,
@@ -410,7 +407,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         self.mosaic = self.augment and not self.rect and mosaic_augmentation  # load 4 images at a time into a mosaic (only during training)
         self.mosaic_border = [-img_size // 2, -img_size // 2]
         self.stride = stride
-        self.path_data_info = pl.Path(path_to_data_info)
+        self.path_data_info = Path(path_to_data_info)
 
         # set augmentation functions by the python package albumentations
         if self.augment:
@@ -424,7 +421,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         try:
             image_files = []  # image files
             for p2fl in self.path_data_info if isinstance(self.path_data_info, list) else [self.path_data_info]:
-                p2fl = pl.Path(p2fl)  # os-agnostic
+                p2fl = Path(p2fl)  # os-agnostic
 
                 if p2fl.is_dir():  # dir
                     image_files += list(p2fl.glob("**/*.*"))
@@ -432,14 +429,14 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                     with open(p2fl, 'r') as fid:
                         lines = fid.read().strip().splitlines()
                         # convert paths to pathlib objects
-                        lines = [pl.Path(el) for el in lines]
+                        lines = [Path(el) for el in lines]
                         # add parent of the data info file if the path to the label file is not an absolute path.
                         # (this is just a precaution)
                         image_files += [el if el.is_absolute() else p2fl.parent / el for el in lines]
                 else:
                     raise Exception(f'{prefix}{p2fl} does not exist')
             # add files if they match one of the allowed image formats
-            self.img_files = sorted([pl.Path(x) for x in image_files if pl.Path(x).suffix.strip('.') in IMAGE_FORMATS])
+            self.img_files = sorted([Path(x) for x in image_files if Path(x).suffix.strip('.') in IMAGE_FORMATS])
             assert self.img_files, f'{prefix}No images found'
         except Exception as e:
             raise Exception(f'{prefix}Error loading data from {path_to_data_info}: {e}')
@@ -449,7 +446,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         if p2fl.is_file():
             cache_path = p2fl
         else:
-            cache_path = pl.Path(self.label_files[0]).parent
+            cache_path = Path(self.label_files[0]).parent
         cache_path = cache_path.with_suffix('.cache')
 
         cache_exists = cache_path.is_file()
@@ -519,8 +516,8 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         self.imgs = [None] * n_images
         if cache_images:
             if cache_images == 'disk':
-                self.im_cache_dir = pl.Path(pl.Path(self.img_files[0]).parent.as_posix() + '_npy')
-                self.img_npy = [self.im_cache_dir / pl.Path(f).with_suffix('.npy').name for f in self.img_files]
+                self.im_cache_dir = Path(Path(self.img_files[0]).parent.as_posix() + '_npy')
+                self.img_npy = [self.im_cache_dir / Path(f).with_suffix('.npy').name for f in self.img_files]
                 self.im_cache_dir.mkdir(parents=True, exist_ok=True)
             gb = 0  # Gigabytes of cached images
             self.img_hw0, self.img_hw = [None] * n_images, [None] * n_images
@@ -537,9 +534,9 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                 pbar.desc = f'{prefix}Caching images ({gb / 1E9:.1f}GB)'
             pbar.close()
 
-    def cache_labels(self, path_to_cache: Union[str, pl.Path] = './labels.cache', prefix: str = '') -> Dict[str, Any]:
+    def cache_labels(self, path_to_cache: Union[str, Path] = './labels.cache', prefix: str = '') -> Dict[str, Any]:
         # ensure pathlib object
-        path_to_cache = pl.Path(path_to_cache)
+        path_to_cache = Path(path_to_cache)
         # Cache dataset labels, check images and read shapes
         cache = {}  # dict
         n_missing, n_found, n_empty, n_corrupted = 0, 0, 0, 0  # number missing, found, empty, duplicate / NaN
@@ -549,7 +546,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         for im_file, lb_file in pbar:
             n_files += 1
             # ensure pathlib object
-            lb_file = pl.Path(lb_file)
+            lb_file = Path(lb_file)
 
             try:
                 # verify images
@@ -801,7 +798,7 @@ def load_image(self, index):
     # loads 1 image from dataset, returns img, original hw, resized hw
     img = self.imgs[index]
     if img is None:  # not cached
-        p2img = pl.Path(self.img_files[index])
+        p2img = Path(self.img_files[index])
         img = cv2.imread(p2img.as_posix())  # BGR
         assert img is not None, f"Image Not Found {p2img.as_posix()}"
         h0, w0 = img.shape[:2]  # orig hw
@@ -1378,7 +1375,7 @@ class Albumentations:
             # --- filter
             trafo_fncs.append(A.Sharpen(alpha=(0.2, 0.5), lightness=(0.5, 1.0), p=probability))
             trafo_fncs.append(A.Blur(blur_limit=5, p=probability))
-            trafo_fncs.append(A.MedianBlur(p=probability))
+            trafo_fncs.append(A.MedianBlur(blur_limit=5, p=probability / 2))
             # --- brightness: artificial shadow
             # trafo_fncs.append(A.RandomShadow(p=probability) / 2)  # TODO: test
             # --- brightness / pixel-values
@@ -1389,19 +1386,20 @@ class Albumentations:
             # --- geometry
             trafo_fncs.append(A.HorizontalFlip(p=probability))
             trafo_fncs.append(A.VerticalFlip(p=probability))
-            trafo_fncs.append(A.ShiftScaleRotate(shift_limit=0.05, scale_limit=0.1, rotate_limit=45, p=probability))
+            trafo_fncs.append(A.ShiftScaleRotate(shift_limit=0.02, scale_limit=0.1, rotate_limit=20, p=probability,
+                                                 border_mode=cv2.BORDER_WRAP))
             # --- compression
             trafo_fncs.append(A.ImageCompression(quality_lower=75, quality_upper=100,
                                                  compression_type=A.ImageCompression.ImageCompressionType.JPEG,
-                                                 p=probability / 5))
-
+                                                 p=probability / 3))
+            # --- additional noise
             trafo_fncs.append(A.MultiplicativeNoise(multiplier=(0.9, 1.1), p=probability / 2))
             trafo_fncs.append(A.PixelDropout(dropout_prob=0.05, p=probability))
 
         print_debug_msg(f"albumentations: {trafo_fncs}")
 
         if annotation_type.lower() in self.TYPE_BBOX:
-            args = {"bbox_params": A.BboxParams(format='pascal_voc', label_fields=['class_labels'])}
+            args = {"bbox_params": A.BboxParams(format='pascal_voc', label_fields=['class_labels'])} # this is xyxy coordinates
         elif annotation_type.lower() in self.TYPE_KEYPONIT:
             args = {"keypoint_params": A.KeypointParams(format='xy', label_fields=['class_labels'], remove_invisible=False)}
         else:
@@ -1428,16 +1426,16 @@ def create_folder(path='./new'):
 
 def flatten_recursive(path='../coco'):
     # Flatten a recursive directory by bringing all files to top level
-    new_path = pl.Path(path + '_flat')
+    new_path = Path(path + '_flat')
     create_folder(new_path)
-    for file in tqdm(glob.glob(str(pl.Path(path)) + '/**/*.*', recursive=True)):
-        shutil.copyfile(file, new_path / pl.Path(file).name)
+    for file in tqdm(glob.glob(str(Path(path)) + '/**/*.*', recursive=True)):
+        shutil.copyfile(file, new_path / Path(file).name)
 
 
 def extract_boxes(path='../coco/'):  # from utils.datasets import *; extract_boxes('../coco128')
     # Convert detection dataset into classification dataset, with one directory per class
 
-    path = pl.Path(path)  # images dir
+    path = Path(path)  # images dir
     shutil.rmtree(path / 'classifier') if (path / 'classifier').is_dir() else None  # remove existing
     files = list(path.rglob('*.*'))
     n = len(files)  # number of files
@@ -1448,8 +1446,8 @@ def extract_boxes(path='../coco/'):  # from utils.datasets import *; extract_box
             h, w = im.shape[:2]
 
             # labels
-            lb_file = pl.Path(img2label_paths([str(im_file)])[0])
-            if pl.Path(lb_file).exists():
+            lb_file = Path(img2label_paths([str(im_file)])[0])
+            if Path(lb_file).exists():
                 with open(lb_file, 'r') as f:
                     lb = np.array([x.split() for x in f.read().strip().splitlines()], dtype=np.float32)  # labels
 
@@ -1473,11 +1471,11 @@ def autosplit(path='../coco', weights=(0.9, 0.1, 0.0), annotated_only=False):
     """ Autosplit a dataset into train/val/test splits and save path/autosplit_*.txt files
     Usage: from utils.datasets import *; autosplit('../coco')
     Arguments
-        path:           pl.Path to images directory
+        path:           Path to images directory
         weights:        Train, val, test weights (list)
         annotated_only: Only use images with an annotated txt file
     """
-    path = pl.Path(path)  # images dir
+    path = Path(path)  # images dir
     files = sum([list(path.rglob(f"*.{img_ext}")) for img_ext in IMAGE_FORMATS], [])  # image files only
     n = len(files)  # number of files
     indices = random.choices([0, 1, 2], weights=weights, k=n)  # assign each image to a split
@@ -1487,7 +1485,7 @@ def autosplit(path='../coco', weights=(0.9, 0.1, 0.0), annotated_only=False):
 
     print(f'Autosplitting images from {path}' + ', using *.txt labeled images only' * annotated_only)
     for i, img in tqdm(zip(indices, files), total=n):
-        if not annotated_only or pl.Path(img2label_paths([str(img)])[0]).exists():  # check label
+        if not annotated_only or Path(img2label_paths([str(img)])[0]).exists():  # check label
             with open(path / txt[i], 'a') as f:
                 f.write(str(img) + '\n')  # add image to txt file
 
