@@ -338,7 +338,11 @@ def train(hyp, opt, device, tb_writer=None):
                 f'Using {dataloader.num_workers} dataloader workers\n'
                 f'Logging results to {save_dir}\n'
                 f'Starting training for {epochs} epochs...')
+    # save initial checkpoint
     torch.save(model, wdir / 'init.pt')
+
+    checkpoints = []
+
     for epoch in range(start_epoch, epochs):  # epoch ------------------------------------------------------------------
         # put model in training mode
         model.train()
@@ -369,6 +373,7 @@ def train(hyp, opt, device, tb_writer=None):
         if rank in [-1, 0]:
             pbar = tqdm(pbar, total=n_batches)  # progress bar
         optimizer.zero_grad()
+
         for i, (imgs, targets, paths, _) in pbar:  # batch -------------------------------------------------------------
             if opt.export_training_images and Path(opt.export_training_images).is_dir():
                 path_to_export = Path(opt.export_training_images) / opt.name
@@ -435,13 +440,7 @@ def train(hyp, opt, device, tb_writer=None):
                 # Plot
                 if plots and ni < 10:
                     f = save_dir / f'train_batch{ni}.jpg'  # filename
-                    Thread(target=plot_images, args=(imgs, targets, paths, f), daemon=True).start()
-                    # if tb_writer:
-                    #     tb_writer.add_image(f, result, dataformats='HWC', global_step=epoch)
-                    #     tb_writer.add_graph(torch.jit.trace(model, imgs, strict=False), [])  # add model graph
-                # elif plots and ni == 10 and wandb_logger.wandb:
-                #     wandb_logger.log({"Mosaics": [wandb_logger.wandb.Image(str(x), caption=x.name) for x in
-                #                                   save_dir.glob('train*.jpg') if x.exists()]})
+                    Thread(target=plot_images, args=(imgs, targets, paths, f), daemon=True).start() # FIXME: combine with plot above
 
             # end batch ------------------------------------------------------------------------------------------------
         # end epoch ----------------------------------------------------------------------------------------------------
@@ -485,14 +484,11 @@ def train(hyp, opt, device, tb_writer=None):
             for x, tag in zip(list(mloss[:-1]) + list(results) + lr, tags):
                 if tb_writer:
                     tb_writer.add_scalar(tag, x, epoch)  # tensorboard
-                # if wandb_logger.wandb:
-                #     wandb_logger.log({tag: x})  # W&B
 
             # Update best mAP
             fi = fitness(np.array(results).reshape(1, -1))  # weighted combination of [P, R, mAP@.5, mAP@.5-.95]
             if fi > best_fitness:
                 best_fitness = fi
-            # wandb_logger.end_epoch(best_result=best_fitness == fi)
 
             # Save model
             if (not opt.nosave) or (final_epoch and not opt.evolve):  # if save
@@ -503,25 +499,35 @@ def train(hyp, opt, device, tb_writer=None):
                         'ema': deepcopy(ema.ema).half(),
                         'updates': ema.updates,
                         'optimizer': optimizer.state_dict(),
-                        # 'wandb_id': wandb_logger.wandb_run.id if wandb_logger.wandb else None
                         }
 
                 # Save last, best and delete
                 torch.save(ckpt, last)
                 if best_fitness == fi:
                     torch.save(ckpt, best)
+
                 if (best_fitness == fi) and (epoch >= 200):
-                    torch.save(ckpt, wdir / 'best_{:03d}.pt'.format(epoch))
-                if epoch == 0:
-                    torch.save(ckpt, wdir / 'epoch_{:03d}.pt'.format(epoch))
-                elif ((epoch + 1) % opt.save_period) == 0:
-                    torch.save(ckpt, wdir / 'epoch_{:03d}.pt'.format(epoch))
-                elif epoch >= (epochs - 5):
-                    torch.save(ckpt, wdir / 'epoch_{:03d}.pt'.format(epoch))
-                # if wandb_logger.wandb:
-                #     if ((epoch + 1) % opt.save_period == 0 and not final_epoch) and opt.save_period != -1:
-                #         wandb_logger.log_model(
-                #             last.parent, opt, epoch, fi, best_model=best_fitness == fi)
+                    # save checkpoint
+                    filepath = wdir / f'best_{epoch:04d}.pt'
+                    torch.save(ckpt, filepath)
+                    # get list of files
+                    checkpoints = list(wdir.glob("best_*.pt"))
+                    # delete the oldest files if necessary
+                    if 0 < opt.save_best_n_checkpoints < len(checkpoints):
+                        # sort files (ascending)
+                        checkpoints.sort(key=lambda x: x.stat()[8])  # manipulation time, mtime
+                        for _ in range(len(checkpoints) - opt.save_best_n_checkpoints):
+                            # get the oldest file
+                            file_to_delete = checkpoints.pop(0)
+                            file_to_delete.unlink()
+
+                if epoch == 0 or \
+                        ((epoch + 1) % opt.save_period) == 0 or \
+                        epoch >= (epochs - 5):
+                    # save fist checkpoint or in save-period or the X last checkpoints
+                    filepath = wdir / f'epoch_{epoch:04d}.pt'
+                    torch.save(ckpt, filepath)
+
                 del ckpt
 
         # end epoch ----------------------------------------------------------------------------------------------------
@@ -530,10 +536,7 @@ def train(hyp, opt, device, tb_writer=None):
         # Plots
         if plots:
             plot_results(save_dir=save_dir)  # save as results.png
-            # if wandb_logger.wandb:
-            #     files = ['results.png', 'confusion_matrix.png', *[f'{x}_curve.png' for x in ('F1', 'PR', 'P', 'R')]]
-            #     wandb_logger.log({"Results": [wandb_logger.wandb.Image(str(save_dir / f), caption=f) for f in files
-            #                                   if (save_dir / f).exists()]})
+
         # Test best.pt
         logger.info('%g epochs completed in %.3f hours.\n' % (epoch - start_epoch + 1, (time.time() - t0) / 3600))
         if opt.data.endswith('coco.yaml') and n_classes == 80:  # if COCO
@@ -559,11 +562,6 @@ def train(hyp, opt, device, tb_writer=None):
                 strip_optimizer(f)  # strip optimizers
         if opt.bucket:
             os.system(f'gsutil cp {final} gs://{opt.bucket}/weights')  # upload
-        # if wandb_logger.wandb and not opt.evolve:  # Log the stripped model
-        #     wandb_logger.wandb.log_artifact(str(final), type='model',
-        #                                     name='run_' + wandb_logger.wandb_run.id + '_model',
-        #                                     aliases=['last', 'best', 'stripped'])
-        # wandb_logger.finish_run()
     else:
         dist.destroy_process_group()
     torch.cuda.empty_cache()
@@ -604,6 +602,7 @@ if __name__ == '__main__':
     parser.add_argument('--linear-lr', action='store_true', help='linear LR')
     parser.add_argument('--label-smoothing', type=float, default=0.0, help='Label smoothing epsilon')
     parser.add_argument('--save_period', type=int, default=-1, help='Log model after every "save_period" epoch')
+    parser.add_argument('--save-best-n-checkpoints', type=int, default=-1, help='How many checkpoints should be saved at most?')
     parser.add_argument('--freeze', nargs='+', type=int, default=[0], help='Freeze layers: backbone of yolov7=50, first3=0 1 2')
     parser.add_argument('--no-augmentation', action='store_true', help='Do not augment training data')
     parser.add_argument('--v5-metric', action='store_true', help='assume maximum recall as 1.0 in AP calculation')
@@ -615,6 +614,8 @@ if __name__ == '__main__':
                         help="Do not apply mosaic augmentation.")
 
     opt = parser.parse_args()
+
+
 
     print_debug_msg(f"parser opt={opt}")
 
@@ -664,12 +665,11 @@ if __name__ == '__main__':
     logger.info(opt)
     if not opt.evolve:
         tb_writer = None  # init loggers
-        if opt.global_rank in [-1, 0]:
-            prefix = colorstr('tensorboard: ')
-            logger.info(f"{prefix}Start with 'tensorboard --logdir {opt.project}', view at http://localhost:6006/")
-            print_debug_msg(f": SummaryWriter(opt.save_dir):SummaryWriter({opt.save_dir})")
-            tb_writer = SummaryWriter(opt.save_dir)  # Tensorboard
-            tb_writer = False ### FIXME: delete line
+        # if opt.global_rank in [-1, 0]:
+        #     prefix = colorstr('tensorboard: ')
+        #     logger.info(f"{prefix}Start with 'tensorboard --logdir {opt.project}', view at http://localhost:6006/")
+        #     print_debug_msg(f": SummaryWriter(opt.save_dir):SummaryWriter({opt.save_dir})")
+        #     tb_writer = SummaryWriter(opt.save_dir)  # Tensorboard
         train(hyp, opt, device, tb_writer)
 
     # Evolve hyperparameters (optional)
