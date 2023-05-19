@@ -17,62 +17,135 @@ def read_text_file(path: Union[str, Path]) -> List[str]:
 
     with open(path, "r") as fid:
         data = fid.readlines()
-    #
+    # strip newline characters from data (and ignore almost empty lines)
     return [el.strip("\n") for el in data if len(el) > 10]
 
 
-if __name__ == "__main__":
-    path_to_data = Path("data/CNN4VIAB.yaml")
+class AugmentFiles:
+    __window_name = "AugmentFiles"
+    __name_ext = "_aug"
 
+    def __init__(self,
+                 path_to_config_data: Union[str, Path],
+                 task: str,
+                 oversampling: int = 1,
+                 augmentation_probability: float = 0.5,
+                 export_path: Union[str, Path] = "",
+                 do_plot: bool = False
+                 ):
 
-    # load data config file
-    with open(path_to_data, "r") as fid:
-        data_config = yaml.safe_load(fid)
+        self.path_to_data = self._read_data_config(path_to_config_data, task)
+        self.oversampling = oversampling
+        self.do_plot = do_plot
 
-    # load file with validation data (from data config file)
-    path_to_data_val = Path(data_config["val"])
-    data = read_text_file(path_to_data_val)
-    # cast to pathlib objects
-    files = [Path(el.strip("\n")) for el in data if len(el) > 10]
+        # load file with validation data (from data config file)
+        data = read_text_file(self.path_to_data)
+        # cast to pathlib objects
+        self.files = [Path(el.strip("\n")) for el in data if len(el) > 10]
 
-    aug = Albumentations(augment_ogl=False, augmentation_probability=0.5)
+        # set / initialize augmentation
+        self.aug = Albumentations(augment_ogl=False, augmentation_probability=augmentation_probability)
 
-    for p2fl in files:
-        # read image
-        img = cv.imread(p2fl.as_posix(), cv.IMREAD_COLOR)
-        # read labels
-        labels = read_text_file(p2fl.with_suffix(".txt"))
+        # prepare export
+        if not export_path:
+            export_path = self.files[0].parent.parent / "aug"
+        self._path_to_export = Path(export_path)
+        if not self._path_to_export.exists():
+            self._path_to_export.mkdir()
+
+    @staticmethod
+    def _read_data_config(path_to_config_data: Union[str, Path], task: str) -> Path:
+        path_to_config_data = Path(path_to_config_data)
+
+        # load data config file
+        with open(path_to_config_data, "r") as fid:
+            data_config = yaml.safe_load(fid)
+        # path to data file
+        if task not in data_config:
+            raise ValueError(f"Task '{task}' not found in data config file {path_to_config_data.as_posix()}.")
+        return Path(data_config[task])
+
+    @staticmethod
+    def _read_label_file(path_to_file: Path) -> np.ndarray:
+        labels = read_text_file(path_to_file.with_suffix(".txt"))
         labels = [[float(e) for e in el.split(" ")] for el in labels]
         # convert to numpy.ndarray object
-        labels = np.asarray(labels)
-        # to absolute coordinates
-        labels[..., 1:] *= (img.shape[:2][::-1] * 2)
-        # to corner coordinates
-        xyxy = np.hstack((labels[..., 0].reshape(-1, 1), xywh2xyxy(labels[..., 1:])))
+        return np.asarray(labels)
 
-        # augment image + labels
-        img_augmented, labels_augmented = aug(img, xyxy)
-        # img_augmented, labels_augmented = img, xyxy
-        labels_augmented_xywh = np.hstack((labels_augmented[..., 0].reshape(-1, 1), xyxy2xywh(labels_augmented[..., 1:])))
+    @staticmethod
+    def _draw_labeled_image(img: np.ndarray, label_xywh: np.ndarray) -> np.ndarray:
+        img_batch = np.expand_dims(np.moveaxis(img, 2, 0), 0)
+        label_batch = np.hstack((np.zeros((label_xywh.shape[0], 1)), label_xywh))
+        return plot_images(img_batch, label_batch, max_size=max(img.shape))
 
-        img_cv = plot_images(np.expand_dims(np.moveaxis(img_augmented, 2, 0), 0),
-                             np.hstack((np.zeros((labels_augmented.shape[0], 1)), labels_augmented_xywh)),
-                             max_size=max(img.shape))
+    def show_labeled_image(self, img: np.ndarray, label_xywh: np.ndarray,
+                           img_ogl: np.ndarray, label_xywh_ogl: np.ndarray):
 
-        # write
-        path_to_export = p2fl.parent.parent / "aug"
-        if not path_to_export.exists():
-            path_to_export.mkdir()
+        img1 = self._draw_labeled_image(img_ogl, label_xywh_ogl)
+        img2 = self._draw_labeled_image(img, label_xywh)
+        img_cv = np.hstack((img1, img2))
+        cv.imshow(self.__window_name, img_cv)
+        cv.waitKey(0)
 
-        filename = p2fl.stem + "_aug" + p2fl.suffix
-        path_to_file = path_to_export / filename
-        cv.imwrite(path_to_file.as_posix(), img_augmented)
+    def augment_files(self):
+        info = []
+        for p2fl in self.files:
+            # keep track of files
+            info.append(p2fl)
+            # read image
+            img = cv.imread(p2fl.as_posix(), cv.IMREAD_COLOR)
+            # read labels
+            labels = self._read_label_file(p2fl)
+            # to absolute coordinates
+            labels[..., 1:] *= (img.shape[:2][::-1] * 2)
+            # to corner coordinates
+            xyxy = np.hstack((labels[..., 0].reshape(-1, 1), xywh2xyxy(labels[..., 1:])))
 
-        labels_augmented_xywh /= ((1,) + (img_augmented.shape[:2][::-1] * 2))
-        with open(path_to_file.with_suffix(".txt"), "w") as fid:
-            for row in labels_augmented_xywh:
-                fid.write(" ".join([f"{el:.5}" for el in row]) + "\n")
+            for i in range(self.oversampling):
+                # augment image + labels
+                img_augmented, labels_augmented = self.aug(img, xyxy)
+                # img_augmented, labels_augmented = img, xyxy
+                labels_augmented_xywh = np.hstack(
+                    (labels_augmented[..., 0].reshape(-1, 1), xyxy2xywh(labels_augmented[..., 1:])))
 
-        # cv.imshow("tmp", img_cv)
-        # cv.waitKey(0)
-        # cv.destroyAllWindows()
+                # write augmented image
+                filename = p2fl.stem + self.__name_ext + p2fl.suffix
+                path_to_file_new = self._path_to_export / filename
+                cv.imwrite(path_to_file_new.as_posix(), img_augmented)
+                # write augmented labels
+                labels_augmented_xywh /= ((1,) + (img_augmented.shape[:2][::-1] * 2))
+                with open(path_to_file_new.with_suffix(".txt"), "w") as fid:
+                    for row in labels_augmented_xywh:
+                        fid.write(" ".join([f"{el:.5}" for el in row]) + "\n")
+
+                # keep track of files
+                info.append(path_to_file_new)
+
+                if self.do_plot:
+                    # TODO: stack with original image
+                    self.show_labeled_image(img_augmented, labels_augmented_xywh, img, labels)
+                    break
+        # close window if necessary
+        if self.do_plot:
+            cv.destroyWindow(self.__window_name)
+
+        # write new data file
+        path_to_data_val_new = self.path_to_data.with_stem(self.path_to_data.stem + self.__name_ext)
+        with open(path_to_data_val_new, "w") as fid:
+            for el in info:
+                fid.write(el.as_posix() + "\n")
+
+        print(f"Created {int(len(info) / 2)} new files. Paths written to {path_to_data_val_new.as_posix()}.")
+
+
+if __name__ == "__main__":
+    # path_to_config_data = Path("data/CNN4VIAB.yaml")
+    # augmentation_probability = 0.5
+    # do_plot = False
+    # task = "val"
+
+    AugmentFiles(path_to_config_data="data/CNN4VIAB.yaml",
+                 task="val",
+                 augmentation_probability=0.5,
+                 do_plot=False
+                 ).augment_files()
