@@ -7,6 +7,8 @@ import torch.nn.functional as F
 from utils.general import bbox_iou, bbox_alpha_iou, box_iou, box_giou, box_diou, box_ciou, xywh2xyxy
 from utils.torch_utils import is_parallel
 
+from typing import List, Union
+
 
 def smooth_BCE(eps=0.1):  # https://github.com/ultralytics/yolov3/issues/238#issuecomment-598028441
     # return positive, negative label smoothing BCE targets
@@ -556,13 +558,14 @@ class ComputeLoss:
 
 
 class ComputeLossOTA:
+    # Over-the-Air training => various different losses
     # Compute losses
-    def __init__(self, model, autobalance:bool = False):
+    def __init__(self, model, autobalance: bool = False):
         super(ComputeLossOTA, self).__init__()
         device = next(model.parameters()).device  # get model device
         h = model.hyp  # hyperparameters
 
-        # Define criteria
+        # Define criteria: binary cross-entropy with logits loss for classes and object
         BCEcls = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([h['cls_pw']], device=device))
         BCEobj = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([h['obj_pw']], device=device))
 
@@ -577,25 +580,32 @@ class ComputeLossOTA:
         det = model.module.model[-1] if is_parallel(model) else model.model[-1]  # Detect() module
         self.balance = {3: [4.0, 1.0, 0.4]}.get(det.nl, [4.0, 1.0, 0.25, 0.06, .02])  # P3-P7
         self.ssi = list(det.stride).index(16) if autobalance else 0  # stride 16 index
-        self.BCEcls, self.BCEobj, self.gr, self.hyp, self.autobalance = BCEcls, BCEobj, model.gr, h, autobalance
-        for k in 'na', 'nc', 'nl', 'anchors', 'stride':
+        self.BCEcls = BCEcls
+        self.BCEobj = BCEobj
+        self.gr = model.gr
+        self.hyp = h
+        self.autobalance = autobalance
+        for k in ['na', 'nc', 'nl', 'anchors', 'stride']:
             setattr(self, k, getattr(det, k))
 
-    def __call__(self, p, targets, imgs):  # predictions, targets, model   
+    def __call__(self, predictions, targets, imgs):  # predictions, targets, model
         device = targets.device
-        lcls, lbox, lobj = torch.zeros(1, device=device), torch.zeros(1, device=device), torch.zeros(1, device=device)
-        bs, as_, gjs, gis, targets, anchors = self.build_targets(p, targets, imgs)
-        pre_gen_gains = [torch.tensor(pp.shape, device=device)[[3, 2, 3, 2]] for pp in p] 
-    
+        # initialize losses (classes, bounding boxes, objectness
+        loss_cls = torch.zeros(1, device=device)
+        loss_box = torch.zeros(1, device=device)
+        loss_obj = torch.zeros(1, device=device)
+        bs, as_, gjs, gis, targets, anchors = self.build_targets(predictions, targets, imgs)
+        pre_gen_gains = [torch.tensor(pp.shape, device=device)[[3, 2, 3, 2]] for pp in predictions]
 
         # Losses
-        for i, pi in enumerate(p):  # layer index, layer predictions
+        for i, prd_i in enumerate(predictions):  # layer index, layer predictions
             b, a, gj, gi = bs[i], as_[i], gjs[i], gis[i]  # image, anchor, gridy, gridx
-            tobj = torch.zeros_like(pi[..., 0], device=device)  # target obj
+            # initialize / reset target objectness
+            target_obj = torch.zeros_like(prd_i[..., 0], device=device)  # target obj
 
             n = b.shape[0]  # number of targets
             if n:
-                ps = pi[b, a, gj, gi]  # prediction subset corresponding to targets
+                ps = prd_i[b, a, gj, gi]  # prediction subset corresponding to targets
 
                 # Regression
                 grid = torch.stack([gi, gj], dim=1)
@@ -606,57 +616,58 @@ class ComputeLossOTA:
                 selected_tbox = targets[i][:, 2:6] * pre_gen_gains[i]
                 selected_tbox[:, :2] -= grid
                 iou = bbox_iou(pbox.T, selected_tbox, x1y1x2y2=False, CIoU=True)  # iou(prediction, target)
-                lbox += (1.0 - iou).mean()  # iou loss
+                loss_box += (1.0 - iou).mean()  # iou loss
 
                 # Objectness
-                tobj[b, a, gj, gi] = (1.0 - self.gr) + self.gr * iou.detach().clamp(0).type(tobj.dtype)  # iou ratio
+                target_obj[b, a, gj, gi] = (1.0 - self.gr) + self.gr * iou.detach().clamp(0).type(target_obj.dtype)  # iou ratio
 
                 # Classification
                 selected_tcls = targets[i][:, 1].long()
                 if self.nc > 1:  # cls loss (only if multiple classes)
                     t = torch.full_like(ps[:, 5:], self.cn, device=device)  # targets
                     t[range(n), selected_tcls] = self.cp
-                    lcls += self.BCEcls(ps[:, 5:], t)  # BCE
+                    loss_cls += self.BCEcls(ps[:, 5:], t)  # BCE
 
-                # Append targets to text file
-                # with open('targets.txt', 'a') as file:
-                #     [file.write('%11.5g ' * 4 % tuple(x) + '\n') for x in torch.cat((txy[i], twh[i]), 1)]
-
-            obji = self.BCEobj(pi[..., 4], tobj)
-            lobj += obji * self.balance[i]  # obj loss
+            obji = self.BCEobj(prd_i[..., 4], target_obj)
+            loss_obj += obji * self.balance[i]  # obj loss
             if self.autobalance:
                 self.balance[i] = self.balance[i] * 0.9999 + 0.0001 / obji.detach().item()
 
         if self.autobalance:
             self.balance = [x / self.balance[self.ssi] for x in self.balance]
-        lbox *= self.hyp['box']
-        lobj *= self.hyp['obj']
-        lcls *= self.hyp['cls']
-        bs = tobj.shape[0]  # batch size
 
-        loss = lbox + lobj + lcls
-        return loss * bs, torch.cat((lbox, lobj, lcls, loss)).detach()
+        # weight losses by hyperparameters before aggregating them
+        loss_box *= self.hyp['box']
+        loss_obj *= self.hyp['obj']
+        loss_cls *= self.hyp['cls']
 
-    def build_targets(self, p, targets, imgs):
-        indices, anch = self.find_3_positive(p, targets)
+        loss = loss_box + loss_obj + loss_cls
 
+        bs = target_obj.shape[0]  # batch size
+        return loss * bs, torch.cat((loss_box, loss_obj, loss_cls, loss)).detach()
+
+    def build_targets(self, predictions, targets, imgs):
+        indices, anch = self.find_3_positive(predictions, targets)
+        # image/batch, best anchor, grid indices
+
+        nl = len(predictions)
         # initialize
-        matching_bs = [[] for _ in p]
-        matching_as = [[] for _ in p]
-        matching_gjs = [[] for _ in p]
-        matching_gis = [[] for _ in p]
-        matching_targets = [[] for _ in p]
-        matching_anchs = [[] for _ in p]
-        
-        nl = len(p)    
+        matching_bs = [[] for _ in range(nl)]  # batch index
+        matching_as = [[] for _ in range(nl)]  # best anchor index
+        matching_gjs = [[] for _ in range(nl)]  # grid index
+        matching_gis = [[] for _ in range(nl)]  # grid index
+        matching_targets = [[] for _ in range(nl)]
+        matching_anchs = [[] for _ in range(nl)]
     
-        for batch_idx in range(p[0].shape[0]):
+        for batch_idx in range(predictions[0].shape[0]):
             b_idx = targets[:, 0] == batch_idx
             this_target = targets[b_idx]
             if this_target.shape[0] == 0:
                 continue
-                
-            txywh = this_target[:, 2:6] * imgs[batch_idx].shape[1]
+
+            # make coordinates absolute
+            txywh = this_target[:, 2:6] * imgs[batch_idx].shape[1] # FIXME: Why only one shape? => only for square images?
+            # transform target coordinates to (absolute?) corner coordinates
             txyxy = xywh2xyxy(txywh)
 
             pxyxys = []
@@ -669,7 +680,7 @@ class ComputeLossOTA:
             all_gi = []
             all_anch = []
             
-            for i, pi in enumerate(p):
+            for i, pi in enumerate(predictions):
                 b, a, gj, gi = indices[i]
                 idx = (b == batch_idx)
                 b, a, gj, gi = b[idx], a[idx], gj[idx], gi[idx]                
@@ -712,7 +723,7 @@ class ComputeLossOTA:
             dynamic_ks = torch.clamp(top_k.sum(1).int(), min=1)
 
             gt_cls_per_image = (
-                F.one_hot(this_target[:, 1].to(torch.int64), self.nc)
+                F.one_hot(this_target[:, 1].to(torch.int64), self.nc)  # number of classes
                 .float()
                 .unsqueeze(1)
                 .repeat(1, pxyxys.shape[0], 1)
@@ -726,7 +737,7 @@ class ComputeLossOTA:
 
             y = cls_preds_.sqrt_()
             pair_wise_cls_loss = F.binary_cross_entropy_with_logits(
-                torch.log(y/(1-y)),
+                torch.log(y / (1 - y)),
                 gt_cls_per_image,
                 reduction="none"
             ).sum(-1)
@@ -746,7 +757,7 @@ class ComputeLossOTA:
                                         )
                 matching_matrix[gt_idx][pos_idx] = 1.0
 
-            del top_k, dynamic_ks
+            del top_k, dynamic_ks # FIXME: is this necessary (and or a good idea?)
             anchor_matching_gt = matching_matrix.sum(0)
             if (anchor_matching_gt > 1).sum() > 0:
                 _, cost_argmin = torch.min(cost[:, anchor_matching_gt > 1], dim=0)
@@ -791,7 +802,7 @@ class ComputeLossOTA:
 
         return matching_bs, matching_as, matching_gjs, matching_gis, matching_targets, matching_anchs
 
-    def find_3_positive(self, p, targets):
+    def find_3_positive(self, p: List[torch.Tensor], targets: torch.Tensor):
         # check label size, expecting bounding box or bounding box + keypoints
         sz_label = targets.shape[1]
         # bounding-boxes as target:
