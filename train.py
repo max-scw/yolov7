@@ -439,8 +439,8 @@ def train(hyp, opt, device, tb_writer=None):
 
                 # Plot
                 if plots and ni < 10:
-                    f = save_dir / f'train_batch{ni}.jpg'  # filename
-                    Thread(target=plot_images, args=(imgs, targets, paths, f), daemon=True).start() # FIXME: combine with plot above
+                    path_to_file = save_dir / f'train_batch{ni}.jpg'  # filename
+                    Thread(target=plot_images, args=(imgs, targets, paths, path_to_file), daemon=True).start() # FIXME: combine with plot above
 
             # end batch ------------------------------------------------------------------------------------------------
         # end epoch ----------------------------------------------------------------------------------------------------
@@ -508,12 +508,12 @@ def train(hyp, opt, device, tb_writer=None):
 
                 if (best_fitness == fi) and (epoch >= 200):
                     # save checkpoint
-                    filepath = wdir / f'best_{epoch:04d}.pt'
+                    filepath = wdir / f'best_{epoch:05d}.pt'
                     torch.save(ckpt, filepath)
                     # get list of files
                     checkpoints = list(wdir.glob("best_*.pt"))
                     # delete the oldest files if necessary
-                    if 0 < opt.save_best_n_checkpoints < len(checkpoints):
+                    if opt.save_best_n_checkpoints > 0 and len(checkpoints) < opt.save_best_n_checkpoints:
                         # sort files (ascending)
                         checkpoints.sort(key=lambda x: x.stat()[8])  # manipulation time, mtime
                         for _ in range(len(checkpoints) - opt.save_best_n_checkpoints):
@@ -525,7 +525,7 @@ def train(hyp, opt, device, tb_writer=None):
                         ((epoch + 1) % opt.save_period) == 0 or \
                         epoch >= (epochs - 5):
                     # save fist checkpoint or in save-period or the X last checkpoints
-                    filepath = wdir / f'epoch_{epoch:04d}.pt'
+                    filepath = wdir / f'epoch_{epoch:05d}.pt'
                     torch.save(ckpt, filepath)
 
                 del ckpt
@@ -602,8 +602,12 @@ if __name__ == '__main__':
     parser.add_argument('--linear-lr', action='store_true', help='linear LR')
     parser.add_argument('--label-smoothing', type=float, default=0.0, help='Label smoothing epsilon')
     parser.add_argument('--save_period', type=int, default=-1, help='Log model after every "save_period" epoch')
-    parser.add_argument('--save-best-n-checkpoints', type=int, default=-1, help='How many checkpoints should be saved at most?')
-    parser.add_argument('--freeze', nargs='+', type=int, default=[0], help='Freeze layers: backbone of yolov7=50, first3=0 1 2')
+    parser.add_argument('--save-best-n-checkpoints', type=int, default=-1,
+                        help='How many checkpoints should be saved at most?')
+    # parser.add_argument('--delta-best-checkpoint', type=float, default=0,
+    #                     help='TODO')
+    parser.add_argument('--freeze', nargs='+', type=int, default=[0],
+                        help='Freeze layers: backbone of yolov7=50, first3=0 1 2')
     parser.add_argument('--no-augmentation', action='store_true', help='Do not augment training data')
     parser.add_argument('--v5-metric', action='store_true', help='assume maximum recall as 1.0 in AP calculation')
     parser.add_argument("--albumentations_probability", type=float, default=0.01,
@@ -614,8 +618,6 @@ if __name__ == '__main__':
                         help="Do not apply mosaic augmentation.")
 
     opt = parser.parse_args()
-
-
 
     print_debug_msg(f"parser opt={opt}")
 
