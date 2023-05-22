@@ -247,7 +247,7 @@ def train(hyp, opt, device, tb_writer=None):
 
     # Image sizes
     gs = max(int(model.stride.max()), 32)  # grid size (max stride)
-    nl = model.model[-1].nl  # number of detection layers (used for scaling hyp['obj'])
+    n_detection_layers = model.model[-1].nl  # number of detection layers (used for scaling hyp['obj'])
     imgsz, imgsz_test = [check_img_size(x, gs) for x in opt.img_size]  # verify imgsz are gs-multiples
 
     # DP mode
@@ -259,6 +259,7 @@ def train(hyp, opt, device, tb_writer=None):
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model).to(device)
         logger.info('Using SyncBatchNorm()')
 
+    n_keypoints = int(data_dict['nkpt']) if 'nkpt' in data_dict else 0
     # Trainloader
     dataloader, dataset = create_dataloader(train_path, imgsz, batch_size, gs, opt,
                                             hyp=hyp,
@@ -273,7 +274,8 @@ def train(hyp, opt, device, tb_writer=None):
                                             augment=not opt.no_augmentation,
                                             yolov5_augmentation=True if opt.albumentations_probability == 0.01 else False,
                                             albumentation_augmentation_p=opt.albumentations_probability,
-                                            mosaic_augmentation=not opt.no_mosaic_augmentation
+                                            mosaic_augmentation=not opt.no_mosaic_augmentation,
+                                            n_keypoints=n_keypoints
                                             )
     mlc = np.concatenate(dataset.labels, 0)[:, 0].max()  # max label class
     n_batches = len(dataloader)  # number of batches
@@ -289,7 +291,10 @@ def train(hyp, opt, device, tb_writer=None):
                                        world_size=opt.world_size,
                                        workers=opt.workers,
                                        pad=0.5,
-                                       prefix=colorstr('val: '))[0]
+                                       prefix=colorstr('val: '),
+                                       augment=False,
+                                       n_keypoints=n_keypoints,
+                                       )[0]
 
         if not opt.resume:
             labels = np.concatenate(dataset.labels, 0)
@@ -314,9 +319,11 @@ def train(hyp, opt, device, tb_writer=None):
                     find_unused_parameters=any(isinstance(layer, nn.MultiheadAttention) for layer in model.modules()))
 
     # Model parameters
-    hyp['box'] *= 3. / nl  # scale to layers
-    hyp['cls'] *= n_classes / 80. * 3. / nl  # scale to classes and layers
-    hyp['obj'] *= (imgsz / 640) ** 2 * 3. / nl  # scale to image size and layers
+    hyp['box'] *= 3. / n_detection_layers  # scale to layers
+    hyp['cls'] *= n_classes / 80. * 3. / n_detection_layers  # scale to classes and layers  # FIXME: 80 is the number of classes in COCO
+    hyp['obj'] *= (imgsz / 640) ** 2 * 3. / n_detection_layers  # scale to image size and layers
+    # if 'kpt' in hyp:
+    #     hyp['kpt'] *= 3. / nl / n_kpt # scale to layers and number of keypoints  # TODO: add hyp['kpt'] scaling
     hyp['label_smoothing'] = opt.label_smoothing
     model.nc = n_classes  # attach number of classes to model
     model.hyp = hyp  # attach hyperparameters to model
@@ -326,7 +333,7 @@ def train(hyp, opt, device, tb_writer=None):
 
     # Start training
     t0 = time.time()
-    nw = max(round(hyp['warmup_epochs'] * n_batches), 1000)  # number of warmup iterations, max(3 epochs, 1k iterations)
+    n_warmup_iterations = max(round(hyp['warmup_epochs'] * n_batches), 1000)  # number of warmup iterations, max(3 epochs, 1k iterations)
     # nw = min(nw, (epochs - start_epoch) / 2 * nb)  # limit warmup to < 1/2 of training
     maps = np.zeros(n_classes)  # mAP per class
     results = (0, 0, 0, 0, 0, 0, 0)  # P, R, mAP@.5, mAP@.5-.95, val_loss(box, obj, cls)
@@ -340,8 +347,6 @@ def train(hyp, opt, device, tb_writer=None):
                 f'Starting training for {epochs} epochs...')
     # save initial checkpoint
     torch.save(model, wdir / 'init.pt')
-
-    checkpoints = []
 
     for epoch in range(start_epoch, epochs):  # epoch ------------------------------------------------------------------
         # put model in training mode
@@ -365,7 +370,7 @@ def train(hyp, opt, device, tb_writer=None):
         # b = int(random.uniform(0.25 * imgsz, 0.75 * imgsz + gs) // gs * gs)
         # dataset.mosaic_border = [b - imgsz, -b]  # height, width borders
 
-        mloss = torch.zeros(4, device=device)  # mean losses
+        mloss = torch.zeros(5, device=device)  # mean losses  # FIXME: length
         if rank != -1:
             dataloader.sampler.set_epoch(epoch)
         pbar = enumerate(dataloader)
@@ -388,8 +393,8 @@ def train(hyp, opt, device, tb_writer=None):
             imgs = imgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
 
             # Warmup
-            if ni <= nw:
-                xi = [0, nw]  # x interp
+            if ni <= n_warmup_iterations:
+                xi = [0, n_warmup_iterations]  # x interp
                 # model.gr = np.interp(ni, xi, [0.0, 1.0])  # iou loss ratio (obj_loss = 1.0 or iou)
                 accumulate = max(1, np.interp(ni, xi, [1, nbs / total_batch_size]).round())
                 for j, x in enumerate(optimizer.param_groups):
@@ -413,6 +418,7 @@ def train(hyp, opt, device, tb_writer=None):
                     loss, loss_items = compute_loss_ota(pred, targets.to(device), imgs)  # loss scaled by batch_size
                 else:
                     loss, loss_items = compute_loss(pred, targets.to(device))  # loss scaled by batch_size
+
                 if rank != -1:
                     loss *= opt.world_size  # gradient averaged between devices in DDP mode
                 if opt.quad:
@@ -433,7 +439,7 @@ def train(hyp, opt, device, tb_writer=None):
             if rank in [-1, 0]:
                 mloss = (mloss * i + loss_items) / (i + 1)  # update mean losses
                 mem = '%.3gG' % (torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0)  # (GB)
-                s = ('%10s' * 2 + '%10.4g' * 6) % (
+                s = ('%10s' * 2 + '%10.4g' * 7) % (
                     '%g/%g' % (epoch, epochs - 1), mem, *mloss, targets.shape[0], imgs.shape[-1])
                 pbar.set_description(s)
 
@@ -506,19 +512,21 @@ def train(hyp, opt, device, tb_writer=None):
                 if best_fitness == fi:
                     torch.save(ckpt, best)
 
-                if (best_fitness == fi) and (epoch >= 200):
+                if (best_fitness == fi):# and (epoch >= 200):  # FIXME: comment in
                     # save checkpoint
                     filepath = wdir / f'best_{epoch:05d}.pt'
                     torch.save(ckpt, filepath)
                     # get list of files
                     checkpoints = list(wdir.glob("best_*.pt"))
                     # delete the oldest files if necessary
-                    if opt.save_best_n_checkpoints > 0 and len(checkpoints) < opt.save_best_n_checkpoints:
+                    if 0 < opt.save_best_n_checkpoints < len(checkpoints):
                         # sort files (ascending)
                         checkpoints.sort(key=lambda x: x.stat()[8])  # manipulation time, mtime
                         for _ in range(len(checkpoints) - opt.save_best_n_checkpoints):
                             # get the oldest file
                             file_to_delete = checkpoints.pop(0)
+
+                            print_debug_msg(f"Delete file {file_to_delete.as_posix()}")
                             file_to_delete.unlink()
 
                 if epoch == 0 or \
@@ -529,7 +537,6 @@ def train(hyp, opt, device, tb_writer=None):
                     torch.save(ckpt, filepath)
 
                 del ckpt
-
         # end epoch ----------------------------------------------------------------------------------------------------
     # end training
     if rank in [-1, 0]:
@@ -540,7 +547,7 @@ def train(hyp, opt, device, tb_writer=None):
         # Test best.pt
         logger.info('%g epochs completed in %.3f hours.\n' % (epoch - start_epoch + 1, (time.time() - t0) / 3600))
         if opt.data.endswith('coco.yaml') and n_classes == 80:  # if COCO
-            for m in (last, best) if best.exists() else (last):  # speed, mAP tests
+            for m in (last, best) if best.exists() else last:  # speed, mAP tests
                 results, _, _ = test.test(opt.data,
                                           batch_size=batch_size * 2,
                                           imgsz=imgsz_test,
@@ -604,8 +611,6 @@ if __name__ == '__main__':
     parser.add_argument('--save_period', type=int, default=-1, help='Log model after every "save_period" epoch')
     parser.add_argument('--save-best-n-checkpoints', type=int, default=-1,
                         help='How many checkpoints should be saved at most?')
-    # parser.add_argument('--delta-best-checkpoint', type=float, default=0,
-    #                     help='TODO')
     parser.add_argument('--freeze', nargs='+', type=int, default=[0],
                         help='Freeze layers: backbone of yolov7=50, first3=0 1 2')
     parser.add_argument('--no-augmentation', action='store_true', help='Do not augment training data')
@@ -618,6 +623,8 @@ if __name__ == '__main__':
                         help="Do not apply mosaic augmentation.")
 
     opt = parser.parse_args()
+
+  
 
     print_debug_msg(f"parser opt={opt}")
 
