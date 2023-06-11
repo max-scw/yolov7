@@ -87,6 +87,7 @@ def train(hyp, opt, device, tb_writer=None):
         #     weights, epochs, hyp = opt.weights, opt.epochs, opt.hyp  # WandbLogger might update weights, epochs if resuming
 
     n_classes = 1 if opt.single_cls else int(data_dict['nc'])  # number of classes
+    n_keypoints = int(data_dict['nkpt']) if 'nkpt' in data_dict else None
     names = ['item'] if opt.single_cls and len(data_dict['names']) != 1 else data_dict['names']  # class names
     assert len(names) == n_classes, '%g names found for nc=%g dataset in %s' % (len(names), n_classes, opt.data)  # check
 
@@ -99,7 +100,11 @@ def train(hyp, opt, device, tb_writer=None):
             attempt_download(weights)  # download if not found locally
 
         ckpt = torch.load(weights, map_location=device)  # load checkpoint
-        model = Model(opt.cfg or ckpt['model'].yaml, ch=3, nc=n_classes, anchors=hyp.get('anchors')).to(device)  # create
+        model = Model(opt.cfg or ckpt['model'].yaml,
+                      ch=3,  # number of channels = number of layers
+                      nc=n_classes,
+                      anchors=hyp.get('anchors'),
+                      nkpt=n_keypoints).to(device)  # create model
         exclude = ['anchor'] if (opt.cfg or hyp.get('anchors')) and not opt.resume else []  # exclude keys
         state_dict = ckpt['model'].float().state_dict()  # to FP32
         # WHICH FUNCTION PRINTS A MODEL SUMMARY?
@@ -247,7 +252,7 @@ def train(hyp, opt, device, tb_writer=None):
 
     # Image sizes
     gs = max(int(model.stride.max()), 32)  # grid size (max stride)
-    n_detection_layers = model.model[-1].nl  # number of detection layers (used for scaling hyp['obj'])
+    n_detection_layers = model.model[-1].n_layers  # number of detection layers (used for scaling hyp['obj'])
     imgsz, imgsz_test = [check_img_size(x, gs) for x in opt.img_size]  # verify imgsz are gs-multiples
 
     # DP mode
@@ -374,7 +379,7 @@ def train(hyp, opt, device, tb_writer=None):
         if rank != -1:
             dataloader.sampler.set_epoch(epoch)
         pbar = enumerate(dataloader)
-        logger.info(('\n' + '%10s' * 8) % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls', 'total', 'labels', 'img_size'))
+        logger.info(('\n' + '%10s' * 9) % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls', 'kpt', 'total', 'labels', 'img_size'))
         if rank in [-1, 0]:
             pbar = tqdm(pbar, total=n_batches)  # progress bar
         optimizer.zero_grad()
@@ -384,7 +389,8 @@ def train(hyp, opt, device, tb_writer=None):
                 path_to_export = Path(opt.export_training_images) / opt.name
                 if not path_to_export.is_dir():
                     path_to_export.mkdir()
-                    print_debug_msg(f"Directory created to export (augmented) training batches: {path_to_export.as_posix()}")
+                    print_debug_msg(f"Directory created to export (augmented) training batches: "
+                                    f"{path_to_export.as_posix()}")
                 p2fl = path_to_export / f"{opt.name}_e{epoch}_b{i}.jpg"
                 print_debug_msg(f"{p2fl.as_posix()}: {imgs.shape}")
                 plot_images(imgs, targets, fname=p2fl.as_posix(), max_subplots=opt.batch_size, aspect_ratio=16/9)
@@ -471,7 +477,6 @@ def train(hyp, opt, device, tb_writer=None):
                                                  save_dir=save_dir,
                                                  verbose=n_classes < 50 and final_epoch,
                                                  plots=plots and final_epoch,
-                                                 # wandb_logger=wandb_logger,
                                                  compute_loss=compute_loss,
                                                  is_coco=is_coco,
                                                  v5_metric=opt.v5_metric)
@@ -483,7 +488,7 @@ def train(hyp, opt, device, tb_writer=None):
                 os.system('gsutil cp %s gs://%s/results/results%s.txt' % (results_file, opt.bucket, opt.name))
 
             # Log
-            tags = ['train/box_loss', 'train/obj_loss', 'train/cls_loss',  # train loss
+            tags = ['train/box_loss', 'train/obj_loss', 'train/cls_loss', 'train/kpt_loss', # train loss
                     'metrics/precision', 'metrics/recall', 'metrics/mAP_0.5', 'metrics/mAP_0.5:0.95',
                     'val/box_loss', 'val/obj_loss', 'val/cls_loss',  # val loss
                     'x/lr0', 'x/lr1', 'x/lr2']  # params
@@ -512,7 +517,7 @@ def train(hyp, opt, device, tb_writer=None):
                 if best_fitness == fi:
                     torch.save(ckpt, best)
 
-                if (best_fitness == fi):# and (epoch >= 200):  # FIXME: comment in
+                if (best_fitness == fi) and (epoch >= 200):
                     # save checkpoint
                     filepath = wdir / f'best_{epoch:05d}.pt'
                     torch.save(ckpt, filepath)
@@ -563,12 +568,12 @@ def train(hyp, opt, device, tb_writer=None):
                                           v5_metric=opt.v5_metric)
 
         # Strip optimizers
-        final = best if best.exists() else last  # final model
+        final_model = best if best.exists() else last  # final model
         for f in last, best:
             if f.exists():
                 strip_optimizer(f)  # strip optimizers
         if opt.bucket:
-            os.system(f'gsutil cp {final} gs://{opt.bucket}/weights')  # upload
+            os.system(f'gsutil cp {final_model} gs://{opt.bucket}/weights')  # upload
     else:
         dist.destroy_process_group()
     torch.cuda.empty_cache()
@@ -624,7 +629,10 @@ if __name__ == '__main__':
 
     opt = parser.parse_args()
 
-  
+    # KEYPOINTS
+    # TODO: keypoint anchors: uniform distribution np.random.random((n_anchors, 2))
+    # TODO: augmentation: "manual" transformation/mirroring
+
 
     print_debug_msg(f"parser opt={opt}")
 
