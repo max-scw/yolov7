@@ -30,7 +30,8 @@ def image_loop(train_path: Path, opt):
                                             augment=not opt.no_augmentation,
                                             yolov5_augmentation=True if opt.albumentations_probability == 0.01 else False,
                                             albumentation_augmentation_p=opt.albumentations_probability,
-                                            mosaic_augmentation=not opt.no_mosaic_augmentation
+                                            mosaic_augmentation=not opt.no_mosaic_augmentation,
+                                            n_keypoints=2
                                             )
 
     for epoch in range(opt.start_epoch, opt.epochs):  # epoch
@@ -42,7 +43,7 @@ def image_loop(train_path: Path, opt):
                 path_to_export.mkdir()
             p2fl = path_to_export / f"{opt.name}_e{epoch}_b{i}.jpg"
             print_debug_msg(f"{p2fl.as_posix()}: {imgs.shape}")
-            plot_images(imgs, targets, fname=p2fl.as_posix(), max_subplots=opt.batch_size, aspect_ratio=16 / 9)
+            plot_images(imgs, targets, fname=p2fl.as_posix(), max_subplots=opt.batch_size, aspect_ratio=16 / 9, plot_all=True)
 
 
 if __name__ == "__main__":
@@ -66,22 +67,26 @@ if __name__ == "__main__":
     parser.add_argument('--v5-metric', action='store_true', help='assume maximum recall as 1.0 in AP calculation')
     parser.add_argument("--albumentations_probability", type=float, default=0.01,
                         help="Probability to apply data augmentation based on the albumentations package.")
-    parser.add_argument("--export-training-images", type=str, default="VisualizationTools",
+    parser.add_argument("--export-training-images", type=str, default="",
                         help="Folder where to export the (augmented) training images to.")
     parser.add_argument("--no-mosaic-augmentation", action='store_true',
                         help="Do not apply mosaic augmentation.")
 
     opt = parser.parse_args()
 
-    # opt.hyp = "data/hyp.scratch.custom.yaml"
-    # opt.weights = "trained_models/yolov7-tiny.pt"
-    # opt.albumentations_probability = 0.5
-    # opt.batch_size = 66  # 62, 41
-    # opt.epochs = 5000
-    # opt.start_epoch = 1001
-    # opt.name = "TEST_tiny-yolo7"
+    opt.data = "data/keypoints.custom.yaml"  # FIXME: delete
+    opt.cfg = "cfg/training/yolov7-tiny-kpt.yaml"  # FIXME: delete
+    opt.hyp = "../data/hyp.scratch.custom.yaml"
+    # opt.weights = "../trained_models/yolov7-tiny.pt"
+    opt.no_augmentation = True
+    opt.batch_size = 66  # 62, 41
+    opt.epochs = 2
+    # opt.start_epoch = 0
+    opt.name = "TEST2_tiny-yolo7"
     # opt.export_training_images = ""
 
-    image_loop(Path("Trn.txt"), opt)
+    image_loop(Path("../test/Trn_kpt_toy.txt"), opt)
+    # image_loop(Path("Data4Visualization.txt"), opt)
+
     # NOTE: Train/Test/Validation files must be moved to this folder and specify the path relative to here
 

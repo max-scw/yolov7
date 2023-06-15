@@ -84,7 +84,8 @@ def create_dataloader(path, imgsz, batch_size, stride, opt,
                       prefix: str = '',
                       yolov5_augmentation: bool = True,
                       albumentation_augmentation_p: float = 0.01,
-                      mosaic_augmentation: bool = True
+                      mosaic_augmentation: bool = True,
+                      n_keypoints: int = None
                       ):
     # Make sure only the first process in DDP process the dataset first, and the following others can use the cache
     print_debug_msg(f"LoadImagesAndLabels, path: {path}")
@@ -101,8 +102,8 @@ def create_dataloader(path, imgsz, batch_size, stride, opt,
                                       prefix=prefix,
                                       yolov5_augmentation=yolov5_augmentation,
                                       albumentation_augmentation_probability=albumentation_augmentation_p,
-                                      mosaic_augmentation=mosaic_augmentation
-                                      # is_keypoint=False
+                                      mosaic_augmentation=mosaic_augmentation,
+                                      n_keypoints=n_keypoints
                                       )
     batch_size = min(batch_size, len(dataset))
     nw = min([os.cpu_count() // world_size, batch_size if batch_size > 1 else 0, workers])  # number of workers
@@ -396,11 +397,10 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                  albumentation_augmentation_probability: float = 0.3,
                  n_keypoints: int = None
                  ):
-        # n_keypoints = 2  # FIXME: make optional input!
         self.img_size = img_size
         self.augment = augment
-        self.n_kpt = n_keypoints
-        self.sz_label = 3 * self.n_kpt if self.n_kpt else 5  # (cls, x, y, w, h) for bbox, [(x, y, visibility), ...] for keypoints
+        self.n_kpt = n_keypoints if n_keypoints else 0
+        self.sz_label = 5 + 3 * self.n_kpt  # (cls, x, y, w, h) for bbox + [(x, y, visibility), ...] for keypoints
         self.hyp = hyp
         self.image_weights = image_weights
         self.rect = False if image_weights else rect
@@ -413,7 +413,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         if self.augment:
             self.albumentations = Albumentations(augment_ogl=yolov5_augmentation,
                                                  augmentation_probability=albumentation_augmentation_probability,
-                                                 annotation_type="kpt" if self.n_kpt else "bbox"
+                                                 annotation_type="kpt" if self.n_kpt else "bbox" # TODO: fix for bbox + kpt!
                                                  )
         else:
             self.albumentations = None
@@ -564,18 +564,18 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                     # read file with labels
                     with open(lb_file, 'r') as fid:
                         lines = [x.split() for x in fid.read().strip().splitlines()]
-                        if any([len(x) > 8 for x in lines]):  # is segment
-                            # restructure if label is a "segment"
-                            classes = np.array([x[0] for x in lines], dtype=np.float32)
-                            segments = [np.array(x[1:], dtype=np.float32).reshape(-1, 2) for x in lines]  # (cls, xy1...)
-                            # build lines as were expected in the first place
-                            lines = np.concatenate((classes.reshape(-1, 1), segments2boxes(segments)), 1)  # (cls, xywh)
-                        # cast to floats (classes are supposed to be integers though)
-                        lines = np.array(lines, dtype=np.float32)
+                    # if any([len(x) > 8 for x in lines]):  # is segment
+                    #     # restructure if label is a "segment"
+                    #     classes = np.array([x[0] for x in lines], dtype=np.float32)
+                    #     segments = [np.array(x[1:], dtype=np.float32).reshape(-1, 2) for x in lines]  # (cls, xy1...)
+                    #     # build lines as were expected in the first place
+                    #     lines = np.concatenate((classes.reshape(-1, 1), segments2boxes(segments)), 1)  # (cls, xywh)
+                    # cast to floats (classes are supposed to be integers though)
+                    lines = np.array(lines, dtype=np.float32)
                     # verify labels
                     if len(lines):
                         if self.n_kpt:
-                            msg = f'labels require 3 * #keypoints columns for keypoints ' \
+                            msg = f'labels require 5 + 3 * #keypoints columns for keypoints ' \
                                   f'(here: {self.sz_label} for {self.n_kpt} keypoints)'
                         else:
                             msg = f'labels require 1 + 4 columns for bounding-boxes'
@@ -743,28 +743,48 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
 
     @property
     def idx_c(self) -> List[int]:
-        return [x for i in range(self.n_kpt) for x in (3 * i, 3 * i + 1)] if self.n_kpt else list(range(1, 5))
+        """index of coordinates in the label tensor"""
+        return self.idx_c_bbx + self.idx_c_kpt
+
+    @property
+    def idx_c_bbx(self) -> List[int]:
+        """index of coordinates of the bounding box (x, y, w, h) in the label tensor"""
+        return list(range(1, 5))
+
+    @property
+    def idx_c_kpt(self) -> List[int]:
+        """index of coordinates of the keypoints (x, y, visibility, ...) in the label tensor"""
+        idx0_kpt = max(self.idx_c_bbx) + 1
+        return [idx0_kpt + x for i in range(self.n_kpt) for x in (3 * i, 3 * i + 1)]
 
     def transform_to_absolute_coordinates(self, labels, w, h, padw, padh, segments=None):
         """make labels to absolute corner coordinates (lower-left + upper-right corner)"""
         sz_lbl = labels[0].size
+
+        # bounding boxes
+        # normalized xywh to pixel xyxy format
+        labels[:, self.idx_c_bbx] = xywhn2xyxy(labels[:, self.idx_c_bbx], w, h, padw, padh)
+        if segments is not None:
+            segments = [xyn2xy(x, w, h, padw, padh) for x in segments]
         if sz_lbl == 5:
-            # bounding boxes
-            # normalized xywh to pixel xyxy format
-            labels[:, 1:] = xywhn2xyxy(labels[:, 1:], w, h, padw, padh)
-            if segments is not None:
-                segments = [xyn2xy(x, w, h, padw, padh) for x in segments]
-        elif sz_lbl % 3 == 0:
+            # bounding box regression
+            pass
+        elif sz_lbl > 5 and (sz_lbl - 5) % 3 == 0:
             # keypoints
-            n_kpt = sz_lbl // 3
+            n_kpt = (sz_lbl - 5) // 3
             assert self.n_kpt == n_kpt
-            offset = [padw, padh] * self.n_kpt
-            img_size = [w, h] * self.n_kpt
-            labels[:, self.idx_c] = labels[:, self.idx_c] * img_size + offset
+            # FIXME: do we need to scale keypoints to absolute coordinates?
+            # TODO: absolute scale relative to bounding box!
+            xy1 = labels[:, [1, 2]]
+            xy2 = labels[:, [3, 4]]
+            bbx_size = xy2 - xy1
+            bbx_size_repeated = np.hstack((bbx_size, ) * self.n_kpt)
+            offset = np.hstack((xy1, ) * self.n_kpt)
+            # labels[:, self.idx_c_kpt] = labels[:, self.idx_c_kpt] * bbx_size_repeated + offset
         else:
             msg = "Unexpected size of labels. "
             if self.n_kpt:
-                msg += f"Was expecting 3 * #keypoints for keypoints but was {sz_lbl}."
+                msg += f"Was expecting 5 + 3 * #keypoints for keypoints but was {sz_lbl}."
             else:
                 msg += f"Was expecting length 5 for bounding boxes but was {sz_lbl}."
             raise ValueError(msg)
@@ -773,16 +793,23 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
     def transform_to_relative_coordinates(self, labels, w: int, h: int):
         """make labels to relative center coordinates (center point + width + height)"""
         sz_lbl = labels[0].size
+
+        # bounding boxes
+        # pixel xyxy format to normalized xywh
+        labels[:, self.idx_c_bbx] = xyxy2xywh(labels[:, self.idx_c_bbx])  # convert xyxy to xywh
+        labels[:, [2, 4]] /= w  # normalized height 0-1
+        labels[:, [1, 3]] /= h  # normalized width 0-1
+
         if sz_lbl == 5:
             # bounding boxes
-            # pixel xyxy format to normalized xywh
-            labels[:, 1:5] = xyxy2xywh(labels[:, 1:5])  # convert xyxy to xywh
-            labels[:, [2, 4]] /= w  # normalized height 0-1
-            labels[:, [1, 3]] /= h  # normalized width 0-1
-        elif sz_lbl % 3 == 0:
+            pass
+        elif sz_lbl > 5 and (sz_lbl - 5) % 3 == 0:
             # keypoints
-            img_size = [w, h] * self.n_kpt
-            labels[:, self.idx_c] = labels[:, self.idx_c] / img_size
+            n_kpt = (sz_lbl - 5) // 3
+            assert self.n_kpt == n_kpt
+            # TODO: relative to bounding box!
+            # img_size = [w, h] * self.n_kpt
+            # labels[:, self.idx_c_kpt] = labels[:, self.idx_c_kpt] / img_size
         else:
             msg = "Unexpected size of labels. "
             if self.n_kpt:
@@ -1387,7 +1414,7 @@ class Albumentations:
             trafo_fncs.append(A.HorizontalFlip(p=probability))
             trafo_fncs.append(A.VerticalFlip(p=probability))
             trafo_fncs.append(A.ShiftScaleRotate(shift_limit=0.02, scale_limit=0.1, rotate_limit=20, p=probability,
-                                                 border_mode=cv2.BORDER_WRAP))
+                                                 border_mode=cv2.BORDER_REFLECT_101))
             # --- compression
             trafo_fncs.append(A.ImageCompression(quality_lower=75, quality_upper=100,
                                                  compression_type=A.ImageCompression.ImageCompressionType.JPEG,
@@ -1397,7 +1424,7 @@ class Albumentations:
             trafo_fncs.append(A.PixelDropout(dropout_prob=0.05, p=probability))
 
         print_debug_msg(f"albumentations: {trafo_fncs}")
-
+        # TODO: augment bounding boxes + image with albumentations and transform corresponding keypoints manually afterwards
         if annotation_type.lower() in self.TYPE_BBOX:
             args = {"bbox_params": A.BboxParams(format='pascal_voc', label_fields=['class_labels'])} # this is xyxy coordinates
         elif annotation_type.lower() in self.TYPE_KEYPONIT:
