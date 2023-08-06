@@ -2,7 +2,7 @@ import argparse
 import time
 from pathlib import Path
 
-import cv2
+import cv2 as cv
 import numpy as np
 import torch
 import torch.backends.cudnn as cudnn
@@ -40,6 +40,7 @@ def detect(opt):
     model = attempt_load(weights, map_location=device)  # load FP32 model
     stride = int(model.stride.max())  # model stride
     imgsz = check_img_size(imgsz, s=stride)  # check img_size
+    print_debug_msg(f"imgsz={imgsz}")
 
     if trace:
         model = TracedModel(model, device, opt.img_size)
@@ -96,7 +97,8 @@ def detect(opt):
 
         # Apply NMS
         print_debug_msg(f"conf_thres={opt.conf_thres}, iou_thres={opt.iou_thres}, classes={opt.classes}, agnostic_nms={opt.agnostic_nms}")
-        pred = non_max_suppression(pred, opt.conf_thres, opt.iou_thres, classes=opt.classes, agnostic=opt.agnostic_nms)
+        pred2 = non_max_suppression(pred, opt.conf_thres, opt.iou_thres, classes=opt.classes, agnostic=opt.agnostic_nms)
+        pred = pred2
         t3 = time_synchronized()
 
         # Apply Classifier
@@ -140,27 +142,27 @@ def detect(opt):
 
             # Stream results
             if view_img:
-                cv2.imshow(str(p), im0)
-                cv2.waitKey(1)  # 1 millisecond
+                cv.imshow(str(p), im0)
+                cv.waitKey(1)  # 1 millisecond
 
             # Save results (image with detections)
             if save_img:
                 if dataset.mode == 'image':
-                    cv2.imwrite(save_path, im0)
+                    cv.imwrite(save_path, im0)
                     print(f" The image with the result is saved in: {save_path}")
                 else:  # 'video' or 'stream'
                     if vid_path != save_path:  # new video
                         vid_path = save_path
-                        if isinstance(vid_writer, cv2.VideoWriter):
+                        if isinstance(vid_writer, cv.VideoWriter):
                             vid_writer.release()  # release previous video writer
                         if vid_cap:  # video
-                            fps = vid_cap.get(cv2.CAP_PROP_FPS)
-                            w = int(vid_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                            h = int(vid_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                            fps = vid_cap.get(cv.CAP_PROP_FPS)
+                            w = int(vid_cap.get(cv.CAP_PROP_FRAME_WIDTH))
+                            h = int(vid_cap.get(cv.CAP_PROP_FRAME_HEIGHT))
                         else:  # stream
                             fps, w, h = 30, im0.shape[1], im0.shape[0]
                             save_path += '.mp4'
-                        vid_writer = cv2.VideoWriter(save_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
+                        vid_writer = cv.VideoWriter(save_path, cv.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
                     vid_writer.write(im0)
 
     if save_txt or save_img:
@@ -182,12 +184,15 @@ class Inference:
         self.half = self.device.type != "cpu"  # half precision only supported on CUDA
 
         # Load model
-        self.model = attempt_load(weights, map_location=self.device)  # load FP32 model
+        weights = Path(weights).with_suffix(".pt")
+        assert weights.exists(), f"Specified weights file '{weights.as_posix()}' does not exist."
+        self.model = attempt_load(weights.as_posix(), map_location=self.device)  # load FP32 model
         if self.half:
             self.model.half()  # to FP16
         self._warmed_up = False
 
-        self.stride = int(self.model.stride.max())  # model stride
+        self.stride = int(self.model.stride.max())  # grid size (max stride)
+        assert self.stride <= 32, f"Maximum stride of the model should be 32 but was {self.stride}."
         self.imgsz = check_img_size(imgsz, s=self.stride)  # check img_size
 
         self.__colors = colors
@@ -197,6 +202,10 @@ class Inference:
         return self.model.module.names if hasattr(self.model, 'module') else self.model.names
 
     @property
+    def n_classes(self) -> int:
+        return len(self.names)
+
+    @property
     def colors(self) -> list:
         if self.__colors is None:
             self.__colors = [[random.randint(0, 255) for _ in range(3)] for _ in self.names]
@@ -204,7 +213,7 @@ class Inference:
 
     def _prepare_image(self, image: np.ndarray) -> np.ndarray:
         # Padded resize
-        img_pad = letterbox(image, self.imgsz, stride=self.stride)[0]
+        img_pad = letterbox(image, new_shape=self.imgsz, stride=self.stride)[0]
         # Convert
         img_pad = img_pad[:, :, ::-1].transpose(2, 0, 1)  # bring color channels to front # BGR2RGB
         img_pad = np.ascontiguousarray(img_pad)
@@ -228,7 +237,7 @@ class Inference:
         if self.device.type != 'cpu' and (
                 old_img_b != img.shape[0] or old_img_h != img.shape[2] or old_img_w != img.shape[3]):
             for _ in range(3):
-                self.model(img, augment=True)[0]
+                self.model(img, augment=False)[0]
         t1 = time.time()
         print(f"Warmup took {(1E3 * (t1 - t0)):.1f}ms.")
         self._warmed_up = True
@@ -241,6 +250,8 @@ class Inference:
                 iou_thres: float = 0.45,
                 agnostic_nms: bool = False,
                 classes_to_filter: int = None,
+                to_list: bool = True,
+                rescale_boxes: bool = True
                 ) -> (torch.Tensor, List[float], List[int]):
         img = self._prepare_image(image)
 
@@ -258,21 +269,24 @@ class Inference:
 
         # Process detections
         det = pred[0]  # there is only one image
-        s = ""
+        info = []
         if len(det):
             # Rescale boxes from img_size to im0 size
-            det[:, :4] = scale_coords(img.shape[2:], det[:, :4], image.shape).round()
+            if rescale_boxes:
+                det[:, :4] = scale_coords(img.shape[2:], det[:, :4], image.shape).round()
 
             # Print results
             for c in det[:, -1].unique():
                 n = torch.sum(det[:, -1] == c)  # detections per class
-                s += f"{n} {self.names[int(c)]}{'s' * (n > 1)}, "  # add to string
+                info.append(f"{n} {self.names[int(c)]}{'s' * (n > 1)}")
 
         # Print time (inference + NMS)
-        print(f'{s}Done. ({(1E3 * (t2 - t1)):.1f}ms) Inference, ({(1E3 * (t3 - t2)):.1f}ms) NMS')
-        xyxy = det[..., :4].int().tolist()
-        scores = det[..., 4].tolist()
-        classes = det[..., 5].int().tolist()
+        print(f'Predictions: {", ".join(info)}. ({(1E3 * (t2 - t1)):.1f}ms) Inference, ({(1E3 * (t3 - t2)):.1f}ms) NMS')
+        xyxy = det[..., :4].int()
+        scores = det[..., 4]
+        classes = det[..., 5].int()
+        if to_list:
+            return xyxy.tolist(), scores.tolist(), classes.tolist()
         return xyxy, scores, classes
 
     def plot_box(self,
@@ -292,121 +306,34 @@ class Inference:
             plot_one_box(xyxy, image, label=label, color=color, line_thickness=line_thickness)
 
         if show_img:
-            cv2.imshow("YOLOv7 Inference", image)
-            cv2.waitKey(2)  # 1 millisecond
+            cv.imshow("YOLOv7 Inference", image)
+            cv.waitKey(2)  # 1 millisecond
         return True
 
 
-def predict(weights: Union[str, Path],
-            image: np.ndarray,
-            imgsz: int = 640,
-            device: str = "cpu",
-            colors: List[List] = None,
-            view_img: bool = True,
-            save_img: bool = False,
-            augment: bool = False,
-            conf_thres: float = 0.25,
-            iou_thres: float = 0.45,
-            agnostic_nms: bool = False,
-            classes_to_filter: int = None,
-            ):
-    # Initialize
-    device = select_device(device)
-    half = device.type != 'cpu'  # half precision only supported on CUDA
-
-    # Load model
-    model = attempt_load(weights, map_location=device)  # load FP32 model
-    stride = int(model.stride.max())  # model stride
-    imgsz = check_img_size(imgsz, s=stride)  # check img_size
-
-    # if trace:
-    #     model = TracedModel(model, device, opt.img_size)
-
-    if half:
-        model.half()  # to FP16
-
-    # Get names and colors
-    names = model.module.names if hasattr(model, 'module') else model.names
-    if colors is None:
-        colors = [[random.randint(0, 255) for _ in range(3)] for _ in names]
-
-    # Run inference
-    if device.type != 'cpu':
-        model(torch.zeros(1, 3, imgsz, imgsz).to(device).type_as(next(model.parameters())))  # run once
-    old_img_w = old_img_h = imgsz
-    old_img_b = 1
-
-    t0 = time.time()
-    # for path, img, im0s, vid_cap in dataset:
-    img = torch.from_numpy(image).to(device)
-    img = img.half() if half else img.float()  # uint8 to fp16/32
-    img /= 255.0  # 0 - 255 to 0.0 - 1.0
-    if img.ndimension() == 3:
-        img = img.unsqueeze(0)
-
-    # Warmup
-    if device.type != 'cpu' and (old_img_b != img.shape[0] or old_img_h != img.shape[2] or old_img_w != img.shape[3]):
-        for i in range(3):
-            model(img, augment=augment)[0]
-
-    # Inference
-    t1 = time_synchronized()
-    with torch.no_grad():   # Calculating gradients would cause a GPU memory leak
-        pred = model(img, augment=augment)[0]
-    t2 = time_synchronized()
-
-    # Apply NMS
-    pred = non_max_suppression(pred, conf_thres, iou_thres, classes=classes_to_filter, agnostic=agnostic_nms)
-    t3 = time_synchronized()
-
-    # Process detections
-    s = ""
-    for i, det in enumerate(pred):  # detections per image
-        # p, s, im0, frame = path, '', im0s, getattr(dataset, 'frame', 0)
-
-        # p = Path(p)  # to Path
-        # save_path = str(save_dir / p.name)  # img.jpg
-        # txt_path = str(save_dir / 'labels' / p.stem) + ('' if dataset.mode == 'image' else f'_{frame}')  # img.txt
-        # gn = torch.tensor(image.shape)[[1, 0, 1, 0]]  # normalization gain whwh
-        if len(det):
-            # Rescale boxes from img_size to im0 size
-            det[:, :4] = scale_coords(img.shape[2:], det[:, :4], image.shape).round()
-
-            # Print results
-            for c in det[:, -1].unique():
-                n = (det[:, -1] == c).sum()  # detections per class
-                s += f"{n} {names[int(c)]}{'s' * (n > 1)}, "  # add to string
-
-        # Print time (inference + NMS)
-        print(f'{s}Done. ({(1E3 * (t2 - t1)):.1f}ms) Inference, ({(1E3 * (t3 - t2)):.1f}ms) NMS')
-    print(f'Done. ({time.time() - t0:.3f}s)')
-
-
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--weights', nargs='+', type=str, default='yolov7.pt', help='model.pt path(s)')
+    parser.add_argument('--source', type=str, default='inference/images', help='source')  # file/folder, 0 for webcam
+    parser.add_argument('--img-size', type=int, default=640, help='inference size (pixels)')
+    parser.add_argument('--conf-thres', type=float, default=0.25, help='object confidence threshold')
+    parser.add_argument('--iou-thres', type=float, default=0.45, help='IOU threshold for NMS')
+    parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
+    parser.add_argument('--view-img', action='store_true', help='display results')
+    parser.add_argument('--save-txt', action='store_true', help='save results to *.txt')
+    parser.add_argument('--save-conf', action='store_true', help='save confidences in --save-txt labels')
+    parser.add_argument('--nosave', action='store_true', help='do not save images/videos')
+    parser.add_argument('--classes', nargs='+', type=int, help='filter by class: --class 0, or --class 0 2 3')
+    parser.add_argument('--agnostic-nms', action='store_true', help='class-agnostic NMS')
+    parser.add_argument('--augment', action='store_true', help='augmented inference')
+    parser.add_argument('--update', action='store_true', help='update all models')
+    parser.add_argument('--project', default='runs/detect', help='save results to project/name')
+    parser.add_argument('--name', default='exp', help='save results to project/name')
+    parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
+    parser.add_argument('--no-trace', action='store_true', help='don`t trace model')
+    opt = parser.parse_args()
+    print(opt)
 
-    # parser = argparse.ArgumentParser()
-    # parser.add_argument('--weights', nargs='+', type=str, default='yolov7.pt', help='model.pt path(s)')
-    # parser.add_argument('--source', type=str, default='inference/images', help='source')  # file/folder, 0 for webcam
-    # parser.add_argument('--img-size', type=int, default=640, help='inference size (pixels)')
-    # parser.add_argument('--conf-thres', type=float, default=0.25, help='object confidence threshold')
-    # parser.add_argument('--iou-thres', type=float, default=0.45, help='IOU threshold for NMS')
-    # parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
-    # parser.add_argument('--view-img', action='store_true', help='display results')
-    # parser.add_argument('--save-txt', action='store_true', help='save results to *.txt')
-    # parser.add_argument('--save-conf', action='store_true', help='save confidences in --save-txt labels')
-    # parser.add_argument('--nosave', action='store_true', help='do not save images/videos')
-    # parser.add_argument('--classes', nargs='+', type=int, help='filter by class: --class 0, or --class 0 2 3')
-    # parser.add_argument('--agnostic-nms', action='store_true', help='class-agnostic NMS')
-    # parser.add_argument('--augment', action='store_true', help='augmented inference')
-    # parser.add_argument('--update', action='store_true', help='update all models')
-    # parser.add_argument('--project', default='runs/detect', help='save results to project/name')
-    # parser.add_argument('--name', default='exp', help='save results to project/name')
-    # parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
-    # parser.add_argument('--no-trace', action='store_true', help='don`t trace model')
-    # opt = parser.parse_args()
-    # print(opt)
-    # #check_requirements(exclude=('pycocotools', 'thop'))
-    #
     # with torch.no_grad():
     #     if opt.update:  # update all models (to fix SourceChangeWarning)
     #         for opt.weights in ['yolov7.pt']:
@@ -415,22 +342,26 @@ if __name__ == '__main__':
     #     else:
     #         detect(opt)
 
+
+
     img_size = 640
     stride = 32
-    image_cv = cv2.imread("dataset/Tst/220808_154403_0000000008_CAM1_NORMAL_NG.bmp", cv2.IMREAD_COLOR)
-
-    # # Padded resize
-    # img = letterbox(image_cv, img_size, stride=stride)[0]
-    # # Convert
-    # img = img[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3x416x416
-    # img = np.ascontiguousarray(img)
-    # predict(weights=r"best.pt", image=img, imgsz=img_size)
+    # read file pointing to testing data
+    with open("Tst.txt", "r") as fid:
+        lines = fid.readlines()
+    # convert relevant paths to pathlib object
+    images = [Path(ln.strip("\n")) for ln in lines if len(ln) > 5]
 
     print("____class____")
-    mdl = Inference(weights=r"iny-best.pt",
+    mdl = Inference(weights=Path("trained_models") / "2023-03-28_tiny-yolov7-CNN4VIAB640x640-scratch.pt",
                     imgsz=img_size,
-                    colors=[[45, 66, 117], [40, 185, 218]]
+                    # colors=[[45, 66, 117], [40, 185, 218]]
                     )
-    for i in range(3):
-        x = mdl.predict(image_cv, conf_thres=0.8)
-        mdl.plot_box(image_cv.copy(), *x, show_img=True, bgr2rgb=True)
+    for p2img in images:
+        # read one image
+        img = cv.imread(p2img.as_posix(), cv.IMREAD_COLOR)
+        x = mdl.predict(img, conf_thres=0.65)
+
+        mdl.plot_box(img.copy(), *x, show_img=True, bgr2rgb=True)
+        cv.waitKey(5)  # 1 millisecond
+        break

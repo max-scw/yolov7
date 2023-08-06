@@ -1,5 +1,3 @@
-# YOLOR general utils
-
 import glob
 import logging
 import math
@@ -9,7 +7,8 @@ import random
 import re
 import subprocess
 import time
-import pathlib as pl
+from pathlib import Path
+from datetime import datetime
 
 import cv2
 import numpy as np
@@ -17,6 +16,8 @@ import pandas as pd
 import torch
 import torchvision
 import yaml
+
+from typing import Union
 
 from utils.google_utils import gsutil_getsize
 from utils.metrics import fitness
@@ -30,10 +31,47 @@ cv2.setNumThreads(0)  # prevent OpenCV from multithreading (incompatible with Py
 os.environ['NUMEXPR_MAX_THREADS'] = str(min(os.cpu_count(), 8))  # NumExpr max threads
 
 
-def set_logging(rank=-1):
+def set_logging(rank=-1, filename: Union[str, Path] = None):
+    if filename:
+        kwargs = {
+            "filename": filename,
+            "filemode": "a",
+            "format": "%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s",
+            "datefmt": "%H:%M:%S"
+        }
+    else:
+        kwargs = {"format": "%(message)s"}
+
     logging.basicConfig(
-        format="%(message)s",
+        **kwargs,
         level=logging.INFO if rank in [-1, 0] else logging.WARN)
+
+
+class Log:
+    _filename = None
+
+    def __init__(self, filename: Union[str, Path] = None, print_message: bool = False, level=logging.INFO):
+        if filename:
+            if isinstance(filename, Log) or filename is None:
+                self._filename = filename
+            elif isinstance(filename, (str, Path)):
+                self._filename = Path(filename).with_suffix(".log")
+            else:
+                raise TypeError(f"Unknown type fo input <filename>: {type(filename)}")
+            # turn logging on
+            logging.basicConfig(filename=self._filename,
+                                level=level,
+                                filemode="a",
+                                format="%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s",
+                                datefmt="%H:%M:%S"
+                                )
+        self._print_message = print_message
+
+    def log(self, message: str, print_message: bool = False):
+        if self._filename:
+            logging.info(message)
+        if self._print_message or print_message:
+            print(message)
 
 
 def init_seeds(seed=0):
@@ -51,7 +89,7 @@ def get_latest_run(search_dir='.'):
 
 def isdocker():
     # Is environment a Docker container
-    return pl.Path('/workspace').exists()  # or Path('/.dockerenv').exists()
+    return Path('/workspace').exists()  # or Path('/.dockerenv').exists()
 
 
 def emojis(str=''):
@@ -73,7 +111,7 @@ def check_git_status():
     # Recommend 'git pull' if code is out of date
     print(colorstr('github: '), end='')
     try:
-        assert pl.Path('.git').exists(), 'skipping check (not a git repository)'
+        assert Path('.git').exists(), 'skipping check (not a git repository)'
         assert not isdocker(), 'skipping check (Docker image)'
         assert check_online(), 'skipping check (offline)'
 
@@ -95,8 +133,8 @@ def check_requirements(requirements='requirements.txt', exclude=()):
     # Check installed dependencies meet requirements (pass *.txt file or list of packages)
     import pkg_resources as pkg
     prefix = colorstr('red', 'bold', 'requirements:')
-    if isinstance(requirements, (str, pl.Path)):  # requirements.txt file
-        file = pl.Path(requirements)
+    if isinstance(requirements, (str, Path)):  # requirements.txt file
+        file = Path(requirements)
         if not file.exists():
             print(f"{prefix} {file.resolve()} not found, check failed.")
             return
@@ -110,7 +148,7 @@ def check_requirements(requirements='requirements.txt', exclude=()):
             pkg.require(r)
         except Exception as e:  # DistributionNotFound or VersionConflict if requirements not met
             n += 1
-            print(f"{prefix} {e.req} not found and is required by YOLOR, attempting auto-update...")
+            print(f"{prefix} {e.req} not found and is required by YOLO, attempting auto-update...")
             print(subprocess.check_output(f"pip install '{e.req}'", shell=True).decode())
 
     if n:  # if packages updated
@@ -144,7 +182,7 @@ def check_imshow():
 
 def check_file(file):
     # Search for file if not found
-    if pl.Path(file).is_file() or file == '':
+    if Path(file).is_file() or file == '':
         return file
     else:
         files = glob.glob('./**/' + file, recursive=True)  # find file
@@ -158,13 +196,13 @@ def check_dataset(dict):
     # Download dataset if not found locally
     val, s = dict.get('val'), dict.get('download')
     if val and len(val):
-        val = [pl.Path(x).resolve() for x in (val if isinstance(val, list) else [val])]  # val path
+        val = [Path(x).resolve() for x in (val if isinstance(val, list) else [val])]  # val path
         if not all(x.exists() for x in val):
             print('\nWARNING: Dataset not found, nonexistent paths: %s' % [str(x) for x in val if not x.exists()])
             if s and len(s):  # download script
                 print('Downloading %s ...' % s)
                 if s.startswith('http') and s.endswith('.zip'):  # URL
-                    f = pl.Path(s).name  # filename
+                    f = Path(s).name  # filename
                     torch.hub.download_url_to_file(s, f)
                     r = os.system('unzip -q %s -d ../ && rm %s' % (f, f))  # unzip
                 else:  # bash script
@@ -709,7 +747,7 @@ def non_max_suppression_kpt(prediction, conf_thres=0.25, iou_thres=0.45, classes
          list of detections, on (n,6) tensor per image [xyxy, conf, cls]
     """
     if nc is None:
-        nc = prediction.shape[2] - 5  if not kpt_label else prediction.shape[2] - 56 # number of classes
+        nc = prediction.shape[2] - 5 if not kpt_label else prediction.shape[2] - 56 # number of classes
     xc = prediction[..., 4] > conf_thres  # candidates
 
     # Settings
@@ -814,7 +852,7 @@ def strip_optimizer(f='best.pt', s=''):  # from utils.general import *; strip_op
     print(f"Optimizer stripped from {f},{(' saved as %s,' % s) if s else ''} {mb:.1f}MB")
 
 
-def print_mutation(hyp, results, yaml_file='hyp_evolved.yaml', bucket=''):
+def print_mutation(hyp, results, yaml_file='hyp_evolved.yaml', bucket='', filename="evolve.txt"):
     # Print mutation results to evolve.txt (for use with train.py --evolve)
     a = '%10s' * len(hyp) % tuple(hyp.keys())  # hyperparam keys
     b = '%10.3g' * len(hyp) % tuple(hyp.values())  # hyperparam values
@@ -822,15 +860,15 @@ def print_mutation(hyp, results, yaml_file='hyp_evolved.yaml', bucket=''):
     print('\n%s\n%s\nEvolved fitness: %s\n' % (a, b, c))
 
     if bucket:
-        url = 'gs://%s/evolve.txt' % bucket
-        if gsutil_getsize(url) > (os.path.getsize('evolve.txt') if os.path.exists('evolve.txt') else 0):
+        url = f'gs://%s/{filename}' % bucket
+        if gsutil_getsize(url) > (os.path.getsize(filename) if os.path.exists(filename) else 0):
             os.system('gsutil cp %s .' % url)  # download evolve.txt if larger than local
 
-    with open('evolve.txt', 'a') as f:  # append result
+    with open(filename, 'a') as f:  # append result
         f.write(c + b + '\n')
-    x = np.unique(np.loadtxt('evolve.txt', ndmin=2), axis=0)  # load unique rows
+    x = np.unique(np.loadtxt(filename, ndmin=2), axis=0)  # load unique rows
     x = x[np.argsort(-fitness(x))]  # sort
-    np.savetxt('evolve.txt', x, '%10.3g')  # save sort by fitness
+    np.savetxt(filename, x, '%10.3g')  # save sort by fitness
 
     # Save yaml
     for i, k in enumerate(hyp.keys()):
@@ -842,7 +880,7 @@ def print_mutation(hyp, results, yaml_file='hyp_evolved.yaml', bucket=''):
         yaml.dump(hyp, f, sort_keys=False)
 
     if bucket:
-        os.system('gsutil cp evolve.txt %s gs://%s' % (yaml_file, bucket))  # upload
+        os.system(f'gsutil cp {filename} %s gs://%s' % (yaml_file, bucket))  # upload
 
 
 def apply_classifier(x, model, img, im0):
@@ -882,7 +920,7 @@ def apply_classifier(x, model, img, im0):
 
 def increment_path(path, exist_ok=True, sep=''):
     # Increment path, i.e. runs/exp --> runs/exp{sep}0, runs/exp{sep}1 etc.
-    path = pl.Path(path)  # os-agnostic
+    path = Path(path)  # os-agnostic
     if (path.exists() and exist_ok) or (not path.exists()):
         return str(path)
     else:

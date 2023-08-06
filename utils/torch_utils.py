@@ -62,7 +62,7 @@ def git_describe(path=Path(__file__).parent):  # path must be a directory
 
 def select_device(device='', batch_size=None):
     # device = 'cpu' or '0' or '0,1,2,3'
-    s = f'YOLOR 🚀 {git_describe() or date_modified()} torch {torch.__version__} '  # string
+    s = f'Git: {git_describe() or date_modified()}, torch: {torch.__version__} '  # string
     cpu = device.lower() == 'cpu'
     if cpu:
         os.environ['CUDA_VISIBLE_DEVICES'] = '-1'  # force torch.cuda.is_available() = False
@@ -315,6 +315,7 @@ class BatchNormXd(torch.nn.modules.batchnorm._BatchNorm):
         #  we could return the one that was originally created)
         return
 
+
 def revert_sync_batchnorm(module):
     # this is very similar to the function that it is trying to revert:
     # https://github.com/pytorch/pytorch/blob/c8b3686a3e4ba63dc59e5dcfe5db3430df256833/torch/nn/modules/batchnorm.py#L679
@@ -342,7 +343,7 @@ def revert_sync_batchnorm(module):
 
 class TracedModel(nn.Module):
 
-    def __init__(self, model=None, device=None, img_size=(640,640)): 
+    def __init__(self, model=None, device=None, img_size=(640, 640)):
         super(TracedModel, self).__init__()
         
         print(" Convert model to Traced-model... ") 
@@ -356,8 +357,11 @@ class TracedModel(nn.Module):
 
         self.detect_layer = self.model.model[-1]
         self.model.traced = True
+
+        if isinstance(img_size, int):
+            img_size = (img_size, img_size)
         
-        rand_example = torch.rand(1, 3, img_size, img_size)
+        rand_example = torch.rand(1, 3, img_size[0], img_size[1])
         
         traced_script_module = torch.jit.trace(self.model, rand_example, strict=False)
         #traced_script_module = torch.jit.script(self.model)

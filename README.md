@@ -58,6 +58,7 @@ BTW, the model relies on [PyTorch](https://pytorch.org/). Check out how to expor
 ## Usage
 ### Training
 
+<<<<<<< HEAD
 You can train a network with ![train.py](./train.py) -- so far so obvious.
 Example call:
 ````shell
@@ -68,12 +69,35 @@ This also provides already trained weights [`yolov7_training.pt`](https://github
 Afterwards, run the training a second time without freezing the layers and use the final weights of the previous run as input. This **fine-tuning** very much likely further improves accuracy. This two-stage training should require less than 1/10 of the time of training the model from only partly matching weights (doing transfer learning with a random head) and of course much much less than training everything from scratch.
 
 Unfortunately, no weights were provided for the tiny version, which is the version I prefer.
+=======
+### Training
+* Download MS COCO dataset images ([train](http://images.cocodataset.org/zips/train2017.zip), [val](http://images.cocodataset.org/zips/val2017.zip), [test](http://images.cocodataset.org/zips/test2017.zip)) and [labels](https://github.com/WongKinYiu/yolov7/releases/download/v0.1/coco2017labels-segments.zip). If you have previously used a different version of YOLO, we strongly recommend that you delete `train2017.cache` and `val2017.cache` files, and redownload [labels](https://github.com/WongKinYiu/yolov7/releases/download/v0.1/coco2017labels-segments.zip) 
+
+````shell
+python train.py --device 'cpu' --batch-size 32 --data data/CNN4VIAB.yaml --img 640 640 --cfg cfg/training/yolov7-CNN4VIAB.yaml --weights 'yolov7_training.pt' --name yolov7-CNN4VIAB --hyp data/hyp.scratch.custom.yaml --epochs 300 --adam --workers 4
+````
+Annotation: Every image has its own corresponding label file formatted as followed:
+`<target id> <x-center> <y-center> <width> <height>` relative, i.e. [0, 1]
+
+
+#### Transfer learning
+ Download weights from the original publication:
+* [`yolov7_training.pt`](https://github.com/WongKinYiu/yolov7/releases/download/v0.1/yolov7_training.pt) 
+* [`yolov7x_training.pt`](https://github.com/WongKinYiu/yolov7/releases/download/v0.1/yolov7x_training.pt) 
+* [`yolov7-w6_training.pt`](https://github.com/WongKinYiu/yolov7/releases/download/v0.1/yolov7-w6_training.pt) 
+* [`yolov7-e6_training.pt`](https://github.com/WongKinYiu/yolov7/releases/download/v0.1/yolov7-e6_training.pt)
+* [`yolov7-d6_training.pt`](https://github.com/WongKinYiu/yolov7/releases/download/v0.1/yolov7-d6_training.pt) 
+* [`yolov7-e6e_training.pt`](https://github.com/WongKinYiu/yolov7/releases/download/v0.1/yolov7-e6e_training.pt)
+
+
+>>>>>>> origin/HEAD
 
 All code can be accessed conveniently by command line commands and adjusted with extra arguments. Simply list all options with `python train.py --help`
 ```shell
 >> python train.py --help
 usage: train.py [-h] [--weights WEIGHTS] [--cfg CFG] [--data DATA] [--hyp HYP] [--epochs EPOCHS] [--batch-size BATCH_SIZE] [--img-size IMG_SIZE [IMG_SIZE ...]] [--rect] [--resume [RESUME]] [--nosave] [--notest] [--noautoanchor] [--evolve] [--bucket BUCKET] [--cache-images] [--image-weights] [--device DEVICE] [--multi-scale] [--single-cls] [--adam] [--sync-bn] [--local_rank LOCAL_RANK] [--workers WORKERS] [--project PROJECT] [--entity ENTITY] [--name NAME] [--exist-ok] [--quad] [--linear-lr] [--label-smoothing LABEL_SMOOTHING] [--save_period SAVE_PERIOD] [--artifact_alias ARTIFACT_ALIAS] [--freeze FREEZE [FREEZE ...]] [--v5-metric]
 
+<<<<<<< HEAD
 options:
   -h, --help            show this help message and exit
   --weights WEIGHTS     initial weights path
@@ -121,6 +145,10 @@ options:
 
 ## Inference
 Once you have a trained model, inference is done in [detect.py](./detect.py):
+=======
+### Inference / Detection / Testing
+
+>>>>>>> origin/HEAD
 On video:
 ``` shell
 python detect.py --weights best.pt --conf 0.25 --img-size 640 --source <path to video>
@@ -131,6 +159,19 @@ On image:
 python detect.py --weights best.pt --conf 0.25 --img-size 640 --source <path to image>
 ```
 
+<<<<<<< HEAD
+=======
+
+python detect.py --weights runs/train/yolov7-CNN4VIAB/best.pt --conf 0.25 --img-size 640 --source dataset/Tst
+
+Testing
+````shell
+python test.py --weights best.pt --data ".\data\coco.yaml" --task test
+````
+
+
+## Acknowledgements
+>>>>>>> origin/HEAD
 
 ## Acknowledgments
 

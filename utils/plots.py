@@ -21,6 +21,8 @@ from scipy.signal import butter, filtfilt
 from utils.general import xywh2xyxy, xyxy2xywh
 from utils.metrics import fitness
 
+from typing import List, Union, Any
+
 # Settings
 matplotlib.rc('font', **{'size': 11})
 matplotlib.use('Agg')  # for writing to files only
@@ -111,9 +113,16 @@ def output_to_target(output):
     return np.array(targets)
 
 
-def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max_size=640, max_subplots=16):
+def plot_images(images,
+                targets,
+                paths: Union[str, Path] = None,
+                fname: str = 'images.jpg',
+                names: List[str] = None,
+                max_size: int = 640,
+                max_subplots: int = 16,
+                aspect_ratio: float = 5 / 4
+                ) -> np.ndarray:
     # Plot image grid with labels
-
     if isinstance(images, torch.Tensor):
         images = images.cpu().float().numpy()
     if isinstance(targets, torch.Tensor):
@@ -125,9 +134,11 @@ def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max
 
     tl = 3  # line thickness
     tf = max(tl - 1, 1)  # font thickness
-    bs, _, h, w = images.shape  # batch size, _, height, width
-    bs = min(bs, max_subplots)  # limit plot images
-    ns = np.ceil(bs ** 0.5)  # number of subplots (square)
+    batch_sz, _, h, w = images.shape  # batch size, _, height, width
+    batch_sz = min(batch_sz, max_subplots)  # limit plot images
+
+    ns_h = int(np.round(np.sqrt(batch_sz / aspect_ratio)))
+    ns_w = int(np.ceil(batch_sz / ns_h))
 
     # Check if we should resize
     scale_factor = max_size / max(h, w)
@@ -136,13 +147,14 @@ def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max
         w = math.ceil(scale_factor * w)
 
     colors = color_list()  # list of colors
-    mosaic = np.full((int(ns * h), int(ns * w), 3), 255, dtype=np.uint8)  # init
+    mosaic = np.full((int(ns_h * h), int(ns_w * w), 3), 255, dtype=np.uint8)  # init
     for i, img in enumerate(images):
         if i == max_subplots:  # if last batch has fewer images than we expect
             break
-
-        block_x = int(w * (i // ns))
-        block_y = int(h * (i % ns))
+        i_x = i % ns_w
+        i_y = i // ns_w
+        block_x = int(w * i_x)
+        block_y = int(h * i_y)
 
         img = img.transpose(1, 2, 0)
         if scale_factor < 1:
@@ -183,8 +195,8 @@ def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max
         cv2.rectangle(mosaic, (block_x, block_y), (block_x + w, block_y + h), (255, 255, 255), thickness=3)
 
     if fname:
-        r = min(1280. / max(h, w) / ns, 1.0)  # ratio to limit image size
-        mosaic = cv2.resize(mosaic, (int(ns * w * r), int(ns * h * r)), interpolation=cv2.INTER_AREA)
+        r = min(1280. / max(h / ns_h, w / ns_w), 1.0)  # ratio to limit image size
+        mosaic = cv2.resize(mosaic, (int(ns_w * w * r), int(ns_h * h * r)), interpolation=cv2.INTER_AREA)
         # cv2.imwrite(fname, cv2.cvtColor(mosaic, cv2.COLOR_BGR2RGB))  # cv2 save
         Image.fromarray(mosaic).save(fname)  # PIL save
     return mosaic
@@ -318,16 +330,23 @@ def plot_labels(labels, names=(), save_dir=Path(''), loggers=None):
             v.log({"Labels": [v.Image(str(x), caption=x.name) for x in save_dir.glob('*labels*.jpg')]}, commit=False)
 
 
-def plot_evolution(yaml_file='data/hyp.finetune.yaml'):  # from utils.plots import *; plot_evolution()
+def plot_evolution(yaml_file='data/hyp.finetune.yaml',
+                   filename: str = "evolve.txt",
+                   keys: List[Union[str, Any]] = None
+                   ):  # from utils.plots import *; plot_evolution()
     # Plot hyperparameter evolution results in evolve.txt
     with open(yaml_file) as f:
         hyp = yaml.load(f, Loader=yaml.SafeLoader)
-    x = np.loadtxt('evolve.txt', ndmin=2)
+    x = np.loadtxt(filename, ndmin=2)
     f = fitness(x)
     # weights = (f - f.min()) ** 2  # for weighted results
     plt.figure(figsize=(10, 12), tight_layout=True)
     matplotlib.rc('font', **{'size': 8})
-    for i, (k, v) in enumerate(hyp.items()):
+    if keys is None:
+        hyp2plot = hyp
+    else:
+        hyp2plot = {ky: hyp[ky] for ky in keys}
+    for i, (k, v) in enumerate(hyp2plot.items()):
         y = x[:, i + 7]
         # mu = (y * weights).sum() / weights.sum()  # best weighted result
         mu = y[f.argmax()]  # best single result
@@ -338,8 +357,9 @@ def plot_evolution(yaml_file='data/hyp.finetune.yaml'):  # from utils.plots impo
         if i % 5 != 0:
             plt.yticks([])
         print('%15s: %.3g' % (k, mu))
-    plt.savefig('evolve.png', dpi=200)
-    print('\nPlot saved as evolve.png')
+    filename = Path(filename).with_suffix('.png')
+    plt.savefig(filename, dpi=200)
+    print(f'\nPlot saved as {filename.as_posix()}')
 
 
 def profile_idetection(start=0, stop=0, labels=(), save_dir=''):
