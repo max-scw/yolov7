@@ -1,0 +1,12 @@
+# set number of classes "nc" and class names "names" here, as well as the path to files holding the paths to training, validation, and test images + labels.
+
+# train and val data as 1) directory: path/images/, 2) file: path/images.txt, or 3) list: [path1/images/, path2/images/]
+train: ./Trn.txt
+val: ./Val.txt
+test: ./Tst.txt
+
+# number of classes
+nc: 2
+
+# class names
+names: ['wrong', 'correct']
