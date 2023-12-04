@@ -1,0 +1,22 @@
+# this file specifies the functions and corresponding arguments for data augmentation.
+# The probability of applying a transformation may be defined here but is overwritten by the argument of the ArgumentParser anyway
+
+albumentations:
+  CLAHE:
+    p: 0.01
+  RandomBrightnessContrast:
+    brightness_limit: 0.2
+    contrast_limit: 0.2
+    p: 0.01
+  RandomGamma:
+    gamma_limit: (80, 120)
+    p: 0.01
+  Blur:
+    p: 0.01
+  MedianBlur:
+    p: 0.01
+  ToGray:
+    p: 0.01
+  ImageCompression:
+    quality_lower: 75
+    p: 0.01

@@ -38,8 +38,11 @@ from utils.torch_utils import ModelEMA, select_device, intersect_dicts, torch_di
 from utils.debugging import print_debug_msg
 
 import warnings
-warnings.filterwarnings("ignore", category=UserWarning,
-                        message="torch.meshgrid: in an upcoming release, it will be required to pass the indexing argument.")
+warnings.filterwarnings(
+    "ignore",
+    category=UserWarning,
+    message="torch.meshgrid: in an upcoming release, it will be required to pass the indexing argument."
+)
 
 logger = logging.getLogger(__name__)
 
@@ -62,10 +65,10 @@ def train(hyp, opt, device, tb_writer=None):
     results_file = save_dir / 'results.txt'
 
     # Save run settings
-    with open(save_dir / 'hyp.yaml', 'w') as f:
-        yaml.dump(hyp, f, sort_keys=False)
-    with open(save_dir / 'opt.yaml', 'w') as f:
-        yaml.dump(vars(opt), f, sort_keys=False)
+    with open(save_dir / 'hyp.yaml', 'w') as fid:
+        yaml.dump(hyp, fid, sort_keys=False)
+    with open(save_dir / 'opt.yaml', 'w') as fid:
+        yaml.dump(vars(opt), fid, sort_keys=False)
 
     # Configure
     plots = not opt.evolve  # create plots
@@ -100,11 +103,13 @@ def train(hyp, opt, device, tb_writer=None):
             attempt_download(weights)  # download if not found locally
 
         ckpt = torch.load(weights, map_location=device)  # load checkpoint
-        model = Model(opt.cfg or ckpt['model'].yaml,
-                      ch=3,  # number of channels = number of layers
-                      nc=n_classes,
-                      anchors=hyp.get('anchors'),
-                      nkpt=n_keypoints).to(device)  # create model
+        model = Model(
+            opt.cfg or ckpt['model'].yaml,
+            ch=3,  # number of channels = number of layers
+            nc=n_classes,
+            anchors=hyp.get('anchors'),
+            nkpt=n_keypoints
+        ).to(device)  # create model
         exclude = ['anchor'] if (opt.cfg or hyp.get('anchors')) and not opt.resume else []  # exclude keys
         state_dict = ckpt['model'].float().state_dict()  # to FP32
         # WHICH FUNCTION PRINTS A MODEL SUMMARY?
@@ -129,9 +134,9 @@ def train(hyp, opt, device, tb_writer=None):
             v.requires_grad = False
 
     # Optimizer
-    nbs = 64  # nominal batch size
-    accumulate = max(round(nbs / total_batch_size), 1)  # accumulate loss before optimizing
-    hyp['weight_decay'] *= total_batch_size * accumulate / nbs  # scale weight_decay
+    batch_size_nominal = 64  # nominal batch size
+    accumulate = max(round(batch_size_nominal / total_batch_size), 1)  # accumulate loss before optimizing
+    hyp['weight_decay'] *= total_batch_size * accumulate / batch_size_nominal  # scale weight_decay
     logger.info(f"Scaled weight_decay = {hyp['weight_decay']}")
 
     pg0, pg1, pg2 = [], [], []  # optimizer parameter groups
@@ -207,8 +212,8 @@ def train(hyp, opt, device, tb_writer=None):
     optimizer.add_param_group({'params': pg1, 'weight_decay': hyp['weight_decay']})  # add pg1 with weight_decay
     optimizer.add_param_group({'params': pg2})  # add pg2 (biases)
     logger.info('Optimizer groups: %g .bias, %g conv.weight, %g other' % (len(pg2), len(pg1), len(pg0)))
-    # print_debug_msg(f"optimizer={optimizer}")
-    del pg0, pg1, pg2
+
+    del pg0, pg1, pg2  # free memory
 
     # Scheduler https://arxiv.org/pdf/1812.01187.pdf
     # https://pytorch.org/docs/stable/_modules/torch/optim/lr_scheduler.html#OneCycleLR
@@ -266,40 +271,42 @@ def train(hyp, opt, device, tb_writer=None):
 
     n_keypoints = int(data_dict['nkpt']) if 'nkpt' in data_dict else 0
     # Trainloader
-    dataloader, dataset = create_dataloader(train_path, imgsz, batch_size, gs, opt,
-                                            hyp=hyp,
-                                            cache=opt.cache_images,
-                                            rect=opt.rect,
-                                            rank=rank,
-                                            world_size=opt.world_size,
-                                            workers=opt.workers,
-                                            image_weights=opt.image_weights,
-                                            quad=opt.quad,
-                                            prefix=colorstr('train: '),
-                                            augment=not opt.no_augmentation,
-                                            yolov5_augmentation=True if opt.albumentations_probability == 0.01 else False,
-                                            albumentation_augmentation_p=opt.albumentations_probability,
-                                            mosaic_augmentation=not opt.no_mosaic_augmentation,
-                                            n_keypoints=n_keypoints
-                                            )
+    dataloader, dataset = create_dataloader(
+        train_path, imgsz, batch_size, gs, opt,
+        hyp=hyp,
+        cache=opt.cache_images,
+        rect=opt.rect,
+        rank=rank,
+        world_size=opt.world_size,
+        workers=opt.workers,
+        image_weights=opt.image_weights,
+        quad=opt.quad,
+        prefix=colorstr('train: '),
+        augment=not opt.no_augmentation,
+        augmentation_config=opt.augmentation_config,
+        global_augmentation_probability=opt.augmentation_probability,
+        mosaic_augmentation=not opt.no_mosaic_augmentation,
+        n_keypoints=n_keypoints
+    )
     mlc = np.concatenate(dataset.labels, 0)[:, 0].max()  # max label class
     n_batches = len(dataloader)  # number of batches
     assert mlc < n_classes, 'Label class %g exceeds nc=%g in %s. Possible class labels are 0-%g' % (mlc, n_classes, opt.data, n_classes - 1)
 
     # Process 0
     if rank in [-1, 0]:
-        testloader = create_dataloader(test_path, imgsz_test, batch_size * 2, gs, opt,  # testloader
-                                       hyp=hyp,
-                                       cache=opt.cache_images and not opt.notest,
-                                       rect=True,
-                                       rank=-1,
-                                       world_size=opt.world_size,
-                                       workers=opt.workers,
-                                       pad=0.5,
-                                       prefix=colorstr('val: '),
-                                       augment=False,
-                                       n_keypoints=n_keypoints,
-                                       )[0]
+        testloader = create_dataloader(
+            test_path, imgsz_test, batch_size * 2, gs, opt,  # testloader
+            hyp=hyp,
+            cache=opt.cache_images and not opt.notest,
+            rect=True,
+            rank=-1,
+            world_size=opt.world_size,
+            workers=opt.workers,
+            pad=0.5,
+            prefix=colorstr('val: '),
+            augment=False,
+            n_keypoints=n_keypoints,
+        )[0]
 
         if not opt.resume:
             labels = np.concatenate(dataset.labels, 0)
@@ -325,7 +332,7 @@ def train(hyp, opt, device, tb_writer=None):
 
     # Model parameters
     hyp['box'] *= 3. / n_detection_layers  # scale to layers
-    hyp['cls'] *= n_classes / 80. * 3. / n_detection_layers  # scale to classes and layers  # FIXME: 80 is the number of classes in COCO
+    hyp['cls'] *= n_classes / 80. * 3. / n_detection_layers  # scale to classes and layers  # INFO: 80 is the number of classes in COCO
     hyp['obj'] *= (imgsz / 640) ** 2 * 3. / n_detection_layers  # scale to image size and layers
     # if 'kpt' in hyp:
     #     hyp['kpt'] *= 3. / nl / n_kpt # scale to layers and number of keypoints  # TODO: add hyp['kpt'] scaling
@@ -375,7 +382,7 @@ def train(hyp, opt, device, tb_writer=None):
         # b = int(random.uniform(0.25 * imgsz, 0.75 * imgsz + gs) // gs * gs)
         # dataset.mosaic_border = [b - imgsz, -b]  # height, width borders
 
-        mloss = torch.zeros(5, device=device)  # mean losses  # FIXME: length
+        mloss = torch.zeros(5, device=device)  # mean losses
         if rank != -1:
             dataloader.sampler.set_epoch(epoch)
         pbar = enumerate(dataloader)
@@ -402,7 +409,7 @@ def train(hyp, opt, device, tb_writer=None):
             if ni <= n_warmup_iterations:
                 xi = [0, n_warmup_iterations]  # x interp
                 # model.gr = np.interp(ni, xi, [0.0, 1.0])  # iou loss ratio (obj_loss = 1.0 or iou)
-                accumulate = max(1, np.interp(ni, xi, [1, nbs / total_batch_size]).round())
+                accumulate = max(1, np.interp(ni, xi, [1, batch_size_nominal / total_batch_size]).round())
                 for j, x in enumerate(optimizer.param_groups):
                     # bias lr falls from 0.1 to lr0, all other lrs rise from 0.0 to lr0
                     x['lr'] = np.interp(ni, xi, [hyp['warmup_bias_lr'] if j == 2 else 0.0, x['initial_lr'] * lf(epoch)])
@@ -468,18 +475,20 @@ def train(hyp, opt, device, tb_writer=None):
             final_epoch = epoch + 1 == epochs
             if not opt.notest or final_epoch:  # Calculate mAP
                 # wandb_logger.current_epoch = epoch + 1
-                results, maps, times = test.test(data_dict,
-                                                 batch_size=batch_size * 2,
-                                                 imgsz=imgsz_test,
-                                                 model=ema.ema,
-                                                 single_cls=opt.single_cls,
-                                                 dataloader=testloader,
-                                                 save_dir=save_dir,
-                                                 verbose=n_classes < 50 and final_epoch,
-                                                 plots=plots and final_epoch,
-                                                 compute_loss=compute_loss,
-                                                 is_coco=is_coco,
-                                                 v5_metric=opt.v5_metric)
+                results, maps, times = test.test(
+                    data_dict,
+                    batch_size=batch_size * 2,
+                    imgsz=imgsz_test,
+                    model=ema.ema,
+                    single_cls=opt.single_cls,
+                    dataloader=testloader,
+                    save_dir=save_dir,
+                    verbose=n_classes < 50 and final_epoch,
+                    plots=plots and final_epoch,
+                    compute_loss=compute_loss,
+                    is_coco=is_coco,
+                    v5_metric=opt.v5_metric
+                )
 
             # Write
             with open(results_file, 'a') as f:
@@ -553,19 +562,21 @@ def train(hyp, opt, device, tb_writer=None):
         logger.info('%g epochs completed in %.3f hours.\n' % (epoch - start_epoch + 1, (time.time() - t0) / 3600))
         if opt.data.endswith('coco.yaml') and n_classes == 80:  # if COCO
             for m in (last, best) if best.exists() else last:  # speed, mAP tests
-                results, _, _ = test.test(opt.data,
-                                          batch_size=batch_size * 2,
-                                          imgsz=imgsz_test,
-                                          conf_thres=0.001,
-                                          iou_thres=0.7,
-                                          model=attempt_load(m, device).half(),
-                                          single_cls=opt.single_cls,
-                                          dataloader=testloader,
-                                          save_dir=save_dir,
-                                          save_json=True,
-                                          plots=False,
-                                          is_coco=is_coco,
-                                          v5_metric=opt.v5_metric)
+                results, _, _ = test.test(
+                    opt.data,
+                    batch_size=batch_size * 2,
+                    imgsz=imgsz_test,
+                    conf_thres=0.001,
+                    iou_thres=0.7,
+                    model=attempt_load(m, device).half(),
+                    single_cls=opt.single_cls,
+                    dataloader=testloader,
+                    save_dir=save_dir,
+                    save_json=True,
+                    plots=False,
+                    is_coco=is_coco,
+                    v5_metric=opt.v5_metric
+                )
 
         # Strip optimizers
         final_model = best if best.exists() else last  # final model
@@ -620,8 +631,10 @@ if __name__ == '__main__':
                         help='Freeze layers: backbone of yolov7=50, first3=0 1 2')
     parser.add_argument('--no-augmentation', action='store_true', help='Do not augment training data')
     parser.add_argument('--v5-metric', action='store_true', help='assume maximum recall as 1.0 in AP calculation')
-    parser.add_argument("--albumentations_probability", type=float, default=0.01,
+    parser.add_argument("--augmentation-probability", type=float, default=None,
                         help="Probability to apply data augmentation based on the albumentations package.")
+    parser.add_argument("--augmentation-config", type=str, default="data/augmentation-yolov7.yaml",
+                        help="Path to config file with specifications for transformation functions to augment the trainig data.")
     parser.add_argument("--export-training-images", type=str, default="",
                         help="Folder where to export the (augmented) training images to.")
     parser.add_argument("--no-mosaic-augmentation", action='store_true',
@@ -629,9 +642,8 @@ if __name__ == '__main__':
 
     opt = parser.parse_args()
 
-    # KEYPOINTS
-    # TODO: keypoint anchors: uniform distribution np.random.random((n_anchors, 2))
-    # TODO: augmentation: "manual" transformation/mirroring
+
+
 
 
     print_debug_msg(f"parser opt={opt}")

@@ -12,7 +12,7 @@ Consider this project rather a "for dummies" fork.
 ### Idea (quick pass-through the paper [![arxiv.org](http://img.shields.io/badge/cs.CV-arXiv%3A2207.02696-B31B1B.svg)](https://arxiv.org/abs/2207.02696))
 *Core idea*: "bag of freebies", i.e. invest at training time to reduce inference time => reduce about 40% parameters and 50% computation compared to state-of-the-art real-time object detector.
 
-To explore the the "bag of freebies" (i.e. the hyper-parameters), an  evolution-inspired search is started (well, a grid search would indeed be exhaustive.)
+To explore the "bag of freebies" (i.e. the hyper-parameters), an  evolution-inspired search is started (well, a grid search would indeed be exhaustive.)
 
 ### project structure
 ### Network configuration
@@ -54,7 +54,7 @@ There also exists the option to export the model as [Open Neural Network eXchang
 ### Miscellaneous
 The folder [VisualizationTools](./VisualizationTools) inhabits two scripts that were used to generate a video of the augmented images. It is hardly relevant for any project unless you want to get a better gasp of your data.
 
-When working with a small dataset, it is sometimes advisable to augment even the validations data. However, this should not happen at runtime in a dynamic way as it would obfuscate the metrics. So you may want to augment the validation data once in advance. Use the script [augment_validation_set.py](./augment_validation_set.py) for this.
+When working with a small dataset, it is sometimes advisable to augment even the validation data. However, this should not happen at runtime in a dynamic way as it would obfuscate the metrics. So you may want to augment the validation data once in advance. Use the script [augment_validation_set.py](./augment_validation_set.py) for this.
 
 
 
@@ -67,7 +67,6 @@ BTW, the model relies on [PyTorch](https://pytorch.org/). Check out how to expor
 
 ## Usage
 ### Training
-
 You can train a network with [train.py](./train.py) -- so far so obvious.
 Example call:
 ````shell
@@ -75,17 +74,22 @@ python train.py --device 'cpu' --batch-size 16 --data data/myYOLO.yaml --img 640
 ````
 
 This also provides already trained weights [`yolov7_training.pt`](https://github.com/WongKinYiu/yolov7/releases/download/v0.1/yolov7_training.pt) on the MS COCO dataset (**transfer learning**). Note that one should first train the head of the model if the head differs from the pre-trained dataset (e.g. different number of classes.) For this, freeze the body and train the network for some epochs `python train.py --freeze 60 ...` (check for how many layers the weights were transferred. This is printed on the console when setting up the network. For a *tiny YOLOv7* I have godf experiences with freezing the first 75 layers.)
-Afterwards, run the training a second time without freezing the layers and use the final weights of the previous run as input. This **fine-tuning** very much likely further improves accuracy. This two-stage training should require less than 1/10 of the time of training the model from only partly matching weights (doing transfer learning with a random head) and of course much much less than training everything from scratch.
+Afterward, run the training a second time without freezing the layers and use the final weights of the previous run as input. This **fine-tuning** very much likely further improves accuracy. This two-stage training should require less than 1/10 of the time of training the model from only partly matching weights (doing transfer learning with a random head) and of course much less than training everything from scratch.
 
-Unfortunately, no weights were provided for the tiny version, which is the version I prefer.
+Most relevant config files lie at `data/myYOLO.yaml`, where one can specify the number of classes, the class mapping and the files that point to the training / validation / test data. (The number of classes can also be specified when configuring the architecture, but I prefer to separate a standard architecture configuration from the individual use case it is applied to.)
+How the training data is augmented can be specified in a separate file in the same directory (`data/augmentation-yolov7.yaml` holds the configuration for the original augmentation). Since use cases in industry usually don't have the luxury of millions of images, more augmentation (and with higher probability) is required. In this way, one can easily adjust the augmentation to their needs and what applies for a given use case.
 
 
 All code can be accessed conveniently by command line commands and adjusted with extra arguments. Simply list all options with `python train.py --help`
 ```shell
 >> python train.py --help
-usage: train.py [-h] [--weights WEIGHTS] [--cfg CFG] [--data DATA] [--hyp HYP] [--epochs EPOCHS] [--batch-size BATCH_SIZE] [--img-size IMG_SIZE [IMG_SIZE ...]] [--rect] [--resume [RESUME]] [--nosave] [--notest] [--noautoanchor] [--evolve] [--evolve-generations EVOLVE_GENERATIONS] [--bucket BUCKET] [--cache-images] [--image-weights] [--device DEVICE] [--multi-scale] [--single-cls] [--adam] [--sync-bn] [--local_rank LOCAL_RANK] [--workers WORKERS] [--project PROJECT] [--entity ENTITY] [--name NAME] [--exist-ok] [--quad] [--linear-lr] [--label-smoothing LABEL_SMOOTHING] [--save_period SAVE_PERIOD] [--save-best-n-checkpoints SAVE_BEST_N_CHECKPOINTS] [--freeze FREEZE [FREEZE ...]] [--no-augmentation] [--v5-metric] [--albumentations_probability ALBUMENTATIONS_PROBABILITY] [--export-training-images EXPORT_TRAINING_IMAGES] [--no-mosaic-augmentation]
-
-options:
+usage: train.py [-h] [--weights WEIGHTS] [--cfg CFG] [--data DATA] [--hyp HYP] [--epochs EPOCHS] [--batch-size BATCH_SIZE] [--img-size IMG_SIZE [IMG_SIZE ...]] [--rect] [--resume [RESUME]] [--nosave] [--notest]   
+                [--noautoanchor] [--evolve] [--evolve-generations EVOLVE_GENERATIONS] [--bucket BUCKET] [--cache-images] [--image-weights] [--device DEVICE] [--multi-scale] [--single-cls] [--adam] [--sync-bn]     
+                [--local_rank LOCAL_RANK] [--workers WORKERS] [--project PROJECT] [--entity ENTITY] [--name NAME] [--exist-ok] [--quad] [--linear-lr] [--label-smoothing LABEL_SMOOTHING] [--save_period SAVE_PERIOD]
+                [--save-best-n-checkpoints SAVE_BEST_N_CHECKPOINTS] [--freeze FREEZE [FREEZE ...]] [--no-augmentation] [--v5-metric] [--augmentation-probability AUGMENTATION_PROBABILITY]                           
+                [--augmentation-config AUGMENTATION_CONFIG] [--export-training-images EXPORT_TRAINING_IMAGES] [--no-mosaic-augmentation]                                                                             
+                                                                                                                                                                                                                     
+optional arguments:                                                                                                                                                                                                  
   -h, --help            show this help message and exit
   --weights WEIGHTS     initial weights path
   --cfg CFG             model.yaml path
@@ -131,8 +135,10 @@ options:
                         Freeze layers: backbone of yolov7=50, first3=0 1 2
   --no-augmentation     Do not augment training data
   --v5-metric           assume maximum recall as 1.0 in AP calculation
-  --albumentations_probability ALBUMENTATIONS_PROBABILITY
+  --augmentation-probability AUGMENTATION_PROBABILITY
                         Probability to apply data augmentation based on the albumentations package.
+  --augmentation-config AUGMENTATION_CONFIG
+                        Path to config file with specifications for transformation functions to augment the trainig data.
   --export-training-images EXPORT_TRAINING_IMAGES
                         Folder where to export the (augmented) training images to.
   --no-mosaic-augmentation
