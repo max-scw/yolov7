@@ -2,6 +2,7 @@ import argparse
 import logging
 import sys
 from copy import deepcopy
+from pathlib import Path
 
 from models.common import *
 from models.experimental import *
@@ -10,6 +11,8 @@ from utils.general import make_divisible, check_file, set_logging
 from utils.torch_utils import time_synchronized, fuse_conv_and_bn, model_info, scale_img, initialize_weights, \
     select_device, copy_attr
 from utils.loss import SigmoidBin
+
+from typing import Union
 
 try:
     import thop  # for FLOPS computation
@@ -524,7 +527,14 @@ class IBin(nn.Module):
 
 
 class Model(nn.Module):
-    def __init__(self, cfg: str = 'yolor-csp-c.yaml', ch: int = 3, nc: int = None, anchors=None, nkpt: int = None):  # model, input channels, number of classes
+    def __init__(
+            self,
+            cfg: Union[str, Path] = 'yolor-csp-c.yaml',
+            ch: int = 3,
+            nc: int = None,
+            anchors=None,
+            nkpt: int = None
+    ):  # model, input channels, number of classes
         super(Model, self).__init__()
         self.traced = False
         if isinstance(cfg, dict):
@@ -539,9 +549,14 @@ class Model(nn.Module):
         ch = self.yaml['ch'] = self.yaml.get('ch', ch)  # input channels
 
         def overwrite_config_element(key: str, value) -> bool:
-            if value and value != self.yaml[key]:
-                logger.info(f"Overriding model.yaml {key}={self.yaml[key]} with {key}={value}")
-                self.yaml[key] = value  # override yaml value
+            if value:
+                if key in self.yaml and value != self.yaml[key]:
+                   logger.info(f"Overriding {cfg} {key}={self.yaml[key]} with {key}={value}")
+                else:
+                    logger.info(f"Set {key} in {cfg} to {value}")
+
+                # override yaml value
+                self.yaml[key] = value
             return True
 
         overwrite_config_element('nc', nc)
