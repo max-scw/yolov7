@@ -89,7 +89,6 @@ def create_dataloader(path, imgsz, batch_size, stride, opt,
                       n_keypoints: int = None
                       ):
     # Make sure only the first process in DDP process the dataset first, and the following others can use the cache
-    print_debug_msg(f"LoadImagesAndLabels, path: {path}")
     with torch_distributed_zero_first(rank):
         dataset = LoadImagesAndLabels(
             path, imgsz, batch_size,
@@ -119,7 +118,6 @@ def create_dataloader(path, imgsz, batch_size, stride, opt,
                         pin_memory=True,
                         collate_fn=LoadImagesAndLabels.collate_fn4 if quad else LoadImagesAndLabels.collate_fn)
 
-    print_debug_msg(f"create_dataloader: data-loader created")
     return dataloader, dataset
 
 
@@ -1396,7 +1394,6 @@ class Albumentations:
 
         trafo_fncs = build_augmentation_pipeline(config_file, probability=p, verbose=verbose)
 
-        print_debug_msg(f"albumentations: {trafo_fncs}")
         # TODO: augment bounding boxes + image with albumentations and transform corresponding keypoints manually afterwards
         if annotation_type.lower() in self.TYPE_BBOX:
             args = {"bbox_params": A.BboxParams(format='pascal_voc', label_fields=['class_labels'])} # this is xyxy coordinates

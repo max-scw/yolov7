@@ -43,7 +43,7 @@ def parse_arguments(config: Dict[str, dict]) -> Dict[str, dict]:
     Parses the dictionary from a YAML file
     NOTE: recursive function
     :param config: dictionary (potentially of dictionaries) of strings
-    :return: dictionary of the same depth but with casted values (where applicable) and empty dictionaries where no arguments were provided.
+    :return: dictionary of the same depth but with cast values (where applicable) and empty dictionaries where no arguments were provided.
     """
     # prepare regex patterns for casting
     pattern_float = "(\d+\.\d*|\.\d+)"

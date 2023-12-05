@@ -6,6 +6,7 @@ import random
 import time
 from copy import deepcopy
 from pathlib import Path
+import shutil
 from threading import Thread
 
 import numpy as np
@@ -69,6 +70,8 @@ def train(hyp, opt, device, tb_writer=None):
         yaml.dump(hyp, fid, sort_keys=False)
     with open(save_dir / 'opt.yaml', 'w') as fid:
         yaml.dump(vars(opt), fid, sort_keys=False)
+    if Path(opt.augmentation_config).is_file():
+        shutil.copy(opt.augmentation_config, save_dir / Path(opt.augmentation_config).name)
 
     # Configure
     plots = not opt.evolve  # create plots
@@ -77,17 +80,6 @@ def train(hyp, opt, device, tb_writer=None):
     with open(opt.data) as fid:
         data_dict = yaml.load(fid, Loader=yaml.SafeLoader)  # data dict
     is_coco = opt.data.endswith('coco.yaml')
-
-    # Logging - Doing this before checking the dataset. Might update data_dict
-    # loggers = {'wandb': None}  # loggers dict
-    if rank in [-1, 0]:
-        opt.hyp = hyp  # add hyperparameters
-        run_id = torch.load(weights, map_location=device).get('wandb_id') if weights.endswith('.pt') and os.path.isfile(weights) else None
-        # wandb_logger = WandbLogger(opt, Path(opt.save_dir).stem, run_id, data_dict)
-        # loggers['wandb'] = wandb_logger.wandb
-        # data_dict = wandb_logger.data_dict
-        # if wandb_logger.wandb:
-        #     weights, epochs, hyp = opt.weights, opt.epochs, opt.hyp  # WandbLogger might update weights, epochs if resuming
 
     n_classes = 1 if opt.single_cls else int(data_dict['nc'])  # number of classes
     n_keypoints = int(data_dict['nkpt']) if 'nkpt' in data_dict else None
@@ -641,6 +633,8 @@ if __name__ == '__main__':
                         help="Do not apply mosaic augmentation.")
 
     opt = parser.parse_args()
+
+
 
 
 
