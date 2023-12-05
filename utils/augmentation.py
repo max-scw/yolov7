@@ -49,8 +49,13 @@ def parse_arguments(config: Dict[str, dict]) -> Dict[str, dict]:
     pattern_float = "(\d+\.\d*|\.\d+)"
     pattern_int = "\d+"
     pattern_number = f"({pattern_float}|{pattern_int})"
+
+    # tuple
     re_numeric_tuple = re.compile(f"\((\s?{pattern_number}\s?,\s?)+{pattern_number}?\s?\)")
     # re_generic_tuple = re.compile(r"^\([^)]*\)$")
+
+    # list
+    re_numeric_list = re.compile(f"\[(\s?{pattern_number}\s?,?\s?)+\]")
 
     # boolean
     re_bool = re.compile("(False|True)", re.IGNORECASE)
@@ -69,7 +74,7 @@ def parse_arguments(config: Dict[str, dict]) -> Dict[str, dict]:
             val = parse_arguments(val)
         elif isinstance(val, str):
             # cast string input if applicable
-            if re_numeric_tuple.match(val):
+            if re_numeric_tuple.match(val) or re_numeric_list.match(val):
                 val = literal_eval(val)
             elif re_bool.match(val):
                 val = True if re_true.match(val) else False
