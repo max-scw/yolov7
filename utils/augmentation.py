@@ -9,6 +9,8 @@ import albumentations  # for eval()
 import cv2  # for eval()
 import cv2 as cv  # for eval()
 
+import numpy as np
+
 from typing import Union, Dict
 
 
@@ -113,5 +115,102 @@ def build_albumentations_pipeline(
     return trafo_fncs
 
 
+def create_examples(
+        config_file: Union[str, Path],
+        image_dir: Union[str, Path],
+        image_ext: str = "*",
+        export_dir: Union[str, Path] = None,
+        oversampling: int = 1
+):
+
+    # read augmentation config
+    with open(config_file, "r") as fid:
+        config_txt = yaml.load(fid, Loader=yaml.SafeLoader)
+
+    # parse / cast function arguments
+    config = parse_arguments(config_txt)
+
+    config_albumentations = config["albumentations"]
+
+    # transforms that always apply
+    config_always = dict()
+    config_ = dict()
+    for fnc, opts in config_albumentations.items():
+        if "always_apply" in opts:
+            config_always[fnc] = opts
+        else:
+            config_[fnc] = opts
+
+
+    transforms = dict()
+    for fnc, opts in config_.items():
+        config_tmp = config_always.copy()
+        config_tmp[fnc] = opts.copy()
+
+        trafo_fnc = []
+        for fnc_, opts_ in config_tmp.items():
+            opts_["always_apply"] = True
+            # get transformation function
+            trafo_fnc.append(getattr(A, fnc_)(**opts_))
+
+        # compose
+        transforms[fnc] = A.Compose(trafo_fnc)
+
+    # get images that should be transformed
+    image_dir_ = Path(image_dir)
+    if image_dir_.is_file():
+        images = [image_dir_]
+    elif image_dir_.is_dir():
+        images = list(image_dir_.glob(f"**/*.{image_ext}"))
+
+    export_dir = Path(export_dir)
+
+    # apply transform
+    n_col = max((int(round(oversampling / (16 / 9))), 1))
+    for p2img in images:
+        # read image
+        img = cv.imread(p2img.as_posix(), cv.IMREAD_COLOR)
+        # apply trafos
+        for nm, fnc in transforms.items():
+            imgs_oversampled, row = [], []
+            j = 0
+            for i in range(oversampling):
+                out = fnc(image=img.copy())
+                img_transformed = out["image"]
+                # store transformed image
+                row.append(img_transformed)
+
+                j += 1
+                if j >= n_col:
+                    imgs_oversampled.append(np.hstack(row))
+                    row = []
+                    j = 0
+                elif i >= (oversampling - 1):
+                    row_mat = np.hstack(row)
+                    if len(imgs_oversampled) > 0:
+                        # padding
+                        row_pad = np.zeros((row_mat.shape[0], imgs_oversampled[0].shape[1] - row_mat.shape[1], row_mat.shape[2]))
+                        row_mat = np.hstack([row_mat, row_pad])
+                    imgs_oversampled.append(row_mat)
+            # stack images
+            img_stacked_transforms = np.vstack(imgs_oversampled)
+
+            p2save = export_dir / nm
+            if not p2save.exists():
+                p2save.mkdir(parents=True)
+
+            # write image to folder
+            filename = p2save / f"{p2img.stem}_{nm}{p2img.suffix}"
+            cv.imwrite(filename.as_posix(), img_stacked_transforms)
+    return True
+
+
 if __name__ == "__main__":
-    build_augmentation_pipeline("../cfg/training/data-augmentation.yaml")
+    build_augmentation_pipeline("../data/augmentation-yolov7.yaml")
+
+    create_examples(
+    config_file="../data/augmentation-CRU.yaml",
+    image_dir=r"C:\Users\schwmax\Downloads\NewImages\231205_020556_0000000010_CAM1_NORMAL_OK.bmp",
+    export_dir="export",
+    oversampling=10
+    )
