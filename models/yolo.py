@@ -325,6 +325,88 @@ class IKeypoint(nn.Module):
         return torch.stack((xv, yv), 2).view((1, 1, ny, nx, 2)).float()
 
 
+class MT(nn.Module):
+    stride = None  # strides computed during build
+    export = False  # onnx export
+
+    def __init__(self, nc: int = 80, anchors=(), attn=None, mask_iou: bool = False, ch=()):  # detection layer
+        super(MT, self).__init__()
+        self.n_classes = nc  # number of classes
+        self.n_out = nc + 5  # number of outputs per anchor
+        self.n_layers = len(anchors)  # number of detection layers
+        self.n_anchors = len(anchors[0]) // 2  # number of anchors
+        self.grid = [torch.zeros(1)] * self.n_layers  # init grid
+        a = torch.tensor(anchors).float().view(self.n_layers, -1, 2)
+        self.register_buffer('anchors', a)  # shape(nl, na, 2)
+        self.register_buffer('anchor_grid', a.clone().view(self.n_layers, 1, -1, 1, 1, 2))  # shape(nl, 1, na, 1, 1, 2)
+        self.original_anchors = anchors
+        self.m = nn.ModuleList(nn.Conv2d(x, self.n_out * self.n_anchors, 1) for x in ch[0])  # output conv
+        if mask_iou:
+            self.m_iou = nn.ModuleList(nn.Conv2d(x, self.n_anchors, 1) for x in ch[0])  # output con
+        self.mask_iou = mask_iou
+        self.attn = attn
+        if attn is not None:
+            # self.attn_m = nn.ModuleList(nn.Conv2d(x, attn * self.n_anchors, 3, padding=1) for x in ch)  # output conv
+            self.attn_m = nn.ModuleList(nn.Conv2d(x, attn * self.n_anchors, 1) for x in ch[0])  # output conv
+            # self.attn_m = nn.ModuleList(nn.Conv2d(x, attn * self.n_anchors,  kernel_size=3, stride=1, padding=1) for x in ch)  # output conv
+
+    def forward(self, x):
+        z = []  # inference output
+        za = []
+        zi = []
+        attn = [None] * self.n_layers
+        iou = [None] * self.n_layers
+        self.training |= self.export
+        output = dict()
+        for i in range(self.n_layers):
+            if self.attn is not None:
+                attn[i] = self.attn_m[i](x[0][i])  # conv
+                bs, _, ny, nx = attn[i].shape  # x(bs,2352,20,20) to x(bs,3,20,20,784)
+                attn[i] = attn[i].view(bs, self.n_anchors, self.attn, ny, nx).permute(0, 1, 3, 4, 2).contiguous()
+            if self.mask_iou:
+                iou[i] = self.m_iou[i](x[0][i])
+            x[0][i] = self.m[i](x[0][i])  # conv
+
+            bs, _, ny, nx = x[0][i].shape  # x(bs,255,20,20) to x(bs,3,20,20,85)
+            x[0][i] = x[0][i].view(bs, self.n_anchors, self.n_out, ny, nx).permute(0, 1, 3, 4, 2).contiguous()
+            if self.mask_iou:
+                iou[i] = iou[i].view(bs, self.n_anchors, ny, nx).contiguous()
+
+            if not self.training:  # inference
+                za.append(attn[i].view(bs, -1, self.attn))
+                if self.mask_iou:
+                    zi.append(iou[i].view(bs, -1))
+                if self.grid[i].shape[2:4] != x[0][i].shape[2:4]:
+                    self.grid[i] = self._make_grid(nx, ny).to(x[0][i].device)
+
+                y = x[0][i].sigmoid()
+                y[..., 0:2] = (y[..., 0:2] * 3. - 1.0 + self.grid[i]) * self.stride[i]  # xy
+                y[..., 2:4] = (y[..., 2:4] * 2) ** 2 * self.anchor_grid[i]  # wh
+                z.append(y.view(bs, -1, self.n_out))
+        output["mask_iou"] = None
+        if not self.training:
+            output["test"] = torch.cat(z, 1)
+            if self.attn is not None:
+                output["attn"] = torch.cat(za, 1)
+            if self.mask_iou:
+                output["mask_iou"] = torch.cat(zi, 1).sigmoid()
+        else:
+            if self.attn is not None:
+                output["attn"] = attn
+            if self.mask_iou:
+                output["mask_iou"] = iou
+        output["bbox_and_cls"] = x[0]
+        output["bases"] = x[1]
+        output["sem"] = x[2]
+
+        return output
+
+    @staticmethod
+    def _make_grid(nx: int = 20, ny: int = 20) -> torch.Tensor:
+        yv, xv = torch.meshgrid([torch.arange(ny), torch.arange(nx)])
+        return torch.stack((xv, yv), 2).view((1, 1, ny, nx, 2)).float()
+
+
 class IAuxDetect(nn.Module):
     stride = None  # strides computed during build
     export = False  # onnx export
@@ -466,7 +548,7 @@ class IBin(nn.Module):
         self.no = nc + 3 + \
             self.w_bin_sigmoid.get_length() + self.h_bin_sigmoid.get_length()   # w-bce, h-bce
             # + self.x_bin_sigmoid.get_length() + self.y_bin_sigmoid.get_length()
-        
+
         self.nl = len(anchors)  # number of detection layers
         self.na = len(anchors[0]) // 2  # number of anchors
         self.grid = [torch.zeros(1)] * self.nl  # init grid
@@ -474,7 +556,7 @@ class IBin(nn.Module):
         self.register_buffer('anchors', a)  # shape(nl,na,2)
         self.register_buffer('anchor_grid', a.clone().view(self.nl, 1, -1, 1, 1, 2))  # shape(nl,1,na,1,1,2)
         self.m = nn.ModuleList(nn.Conv2d(x, self.no * self.na, 1) for x in ch)  # output conv
-        
+
         self.ia = nn.ModuleList(ImplicitA(x) for x in ch)
         self.im = nn.ModuleList(ImplicitM(self.no * self.na) for _ in ch)
 
@@ -484,7 +566,7 @@ class IBin(nn.Module):
         #self.y_bin_sigmoid.use_fw_regression = True
         self.w_bin_sigmoid.use_fw_regression = True
         self.h_bin_sigmoid.use_fw_regression = True
-        
+
         # x = x.copy()  # for profiling
         z = []  # inference output
         self.training |= self.export
@@ -501,7 +583,7 @@ class IBin(nn.Module):
                 y = x[i].sigmoid()
                 y[..., 0:2] = (y[..., 0:2] * 2. - 0.5 + self.grid[i]) * self.stride[i]  # xy
                 #y[..., 2:4] = (y[..., 2:4] * 2) ** 2 * self.anchor_grid[i]  # wh
-                
+
 
                 #px = (self.x_bin_sigmoid.forward(y[..., 0:12]) + self.grid[i][..., 0]) * self.stride[i]
                 #py = (self.y_bin_sigmoid.forward(y[..., 12:24]) + self.grid[i][..., 1]) * self.stride[i]
@@ -513,9 +595,9 @@ class IBin(nn.Module):
                 #y[..., 1] = py
                 y[..., 2] = pw
                 y[..., 3] = ph
-                
+
                 y = torch.cat((y[..., 0:4], y[..., 46:]), dim=-1)
-                
+
                 z.append(y.view(bs, -1, y.shape[-1]))
 
         return x if self.training else (torch.cat(z, 1), x)
@@ -542,7 +624,8 @@ class Model(nn.Module):
         else:  # is *.yaml
             import yaml  # for torch hub
             self.yaml_file = Path(cfg).name
-            with open(cfg) as fid:
+
+            with open(cfg, "r") as fid:
                 self.yaml = yaml.load(fid, Loader=yaml.SafeLoader)  # model dict
 
         # Define model
@@ -572,23 +655,30 @@ class Model(nn.Module):
 
         # Build strides, anchors
         m = self.model[-1]  # Detect()
-        if isinstance(m, (Detect, IDetect, IAuxDetect, IBin, IKeypoint)):
+        if isinstance(m, (Detect, IDetect, IAuxDetect, IBin, IKeypoint, MT)):
             s = 256  # 2x min stride
             if isinstance(m, IAuxDetect):
                 m.stride = torch.tensor(
                     [s / x.shape[-2] for x in self.forward(torch.zeros(1, ch, s, s))[:4]])  # forward
+            elif isinstance(m, MT):
+                temp = self.forward(torch.zeros(1, ch, s, s))
+                if isinstance(temp, list):
+                    temp = temp[0]
+                m.stride = torch.tensor([s / x.shape[-2] for x in temp["bbox_and_cls"]])  # forward
             else:
                 m.stride = torch.tensor([s / x.shape[-2] for x in self.forward(torch.zeros(1, ch, s, s))])  # forward
+
             check_anchor_order(m)
             m.anchors /= m.stride.view(-1, 1, 1)
             self.stride = m.stride
+
             if isinstance(m, IAuxDetect):
                 self._initialize_aux_biases()  # only run once
             elif isinstance(m, IBin):
                 self._initialize_biases_bin()  # only run once
             elif isinstance(m, IKeypoint):
                 self._initialize_biases_kpt()  # only run once
-            else:
+            else:  # Detect, IDetect, MT
                 self._initialize_biases()  # only run once
             # print('Strides: %s' % m.stride.tolist())
 
@@ -817,10 +907,19 @@ def parse_model(data_dict, ch):  # model_dict, input_channels(3)
                 args[1] = [list(range(args[1] * 2))] * len(from_layer)
         elif module is ReOrg:
             c2 = ch[from_layer] * 4
+        elif module in [Merge]:
+            c2 = args[0]
+        elif module in [MT]:
+            if len(args) == 3:
+                args.append(False)
+            args.append([ch[x] for x in from_layer])
         elif module is Contract:
             c2 = ch[from_layer] * args[0] ** 2
         elif module is Expand:
             c2 = ch[from_layer] // args[0] ** 2
+        elif module is Refine:
+            args.append([ch[x] for x in from_layer])
+            c2 = args[0]
         else:
             c2 = ch[from_layer]
 
