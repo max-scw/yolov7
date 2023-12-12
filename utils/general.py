@@ -31,6 +31,23 @@ cv2.setNumThreads(0)  # prevent OpenCV from multithreading (incompatible with Py
 os.environ['NUMEXPR_MAX_THREADS'] = str(min(os.cpu_count(), 8))  # NumExpr max threads
 
 
+def crop_masks(masks, boxes):
+    """
+    "Crop" predicted masks by zeroing out everything not in the predicted bbox.
+    Vectorized by Chong (thanks Chong).
+
+    Args:
+        - masks should be a size [h, w, n] tensor of masks
+        - boxes should be a size [n, 4] tensor of bbox coords in relative point form
+    """
+
+    n, h, w = masks.shape
+    x1, y1, x2, y2 = torch.chunk(boxes[:, :, None], 4, 1)  # x1 shape(1,1,n)
+    r = torch.arange(w, device=masks.device, dtype=x1.dtype)[None, None, :]  # rows shape(1,w,1)
+    c = torch.arange(h, device=masks.device, dtype=x1.dtype)[None, :, None]  # cols shape(h,1,1)
+
+    return masks * ((r >= x1) * (r < x2) * (c >= y1) * (c < y2))
+
 def set_logging(rank=-1, filename: Union[str, Path] = None):
     if filename:
         kwargs = {
@@ -372,12 +389,17 @@ def scale_coords(img1_shape, coords, img0_shape, ratio_pad=None):
     return coords
 
 
-def clip_coords(boxes, img_shape):
+def clip_coords(boxes, img_shape) -> bool:
     # Clip bounding xyxy bounding boxes to image shape (height, width)
-    boxes[:, 0].clamp_(0, img_shape[1])  # x1
-    boxes[:, 1].clamp_(0, img_shape[0])  # y1
-    boxes[:, 2].clamp_(0, img_shape[1])  # x2
-    boxes[:, 3].clamp_(0, img_shape[0])  # y2
+    if isinstance(boxes, torch.Tensor):  # faster individually
+        boxes[:, 0].clamp_(0, img_shape[1])  # x1
+        boxes[:, 1].clamp_(0, img_shape[0])  # y1
+        boxes[:, 2].clamp_(0, img_shape[1])  # x2
+        boxes[:, 3].clamp_(0, img_shape[0])  # y2
+    else:  # np.array (faster grouped)
+        boxes[:, [0, 2]] = boxes[:, [0, 2]].clip(0, img_shape[1])  # x1, x2
+        boxes[:, [1, 3]] = boxes[:, [1, 3]].clip(0, img_shape[0])  # y1, y2
+    return True
 
 
 def bbox_iou(box1, box2, x1y1x2y2=True, GIoU=False, DIoU=False, CIoU=False, eps=1e-7):

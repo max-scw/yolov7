@@ -26,7 +26,8 @@ import test  # import test.py to get mAP after each epoch
 from models.experimental import attempt_load
 from models.yolo import Model
 from utils.autoanchor import check_anchors
-from utils.datasets import create_dataloader
+# from utils.datasets import create_dataloader
+from utils.datasets_segments import create_dataloader
 from utils.general import (labels_to_class_weights, increment_path, labels_to_image_weights, init_seeds,
                            strip_optimizer, get_latest_run, check_dataset, check_file, check_img_size,
                            print_mutation, set_logging, one_cycle, colorstr)
@@ -196,6 +197,7 @@ def train(hyp, opt, device, tb_writer=None):
             if hasattr(v.rbr_dense, 'vector'):   
                 pg0.append(v.rbr_dense.vector)
 
+
     if opt.adam:
         optimizer = optim.Adam(pg0, lr=hyp['lr0'], betas=(hyp['momentum'], 0.999))  # adjust beta1 to momentum
     else:
@@ -214,6 +216,7 @@ def train(hyp, opt, device, tb_writer=None):
     else:
         lf = one_cycle(1, hyp['lrf'], epochs)  # cosine 1->hyp['lrf']
     scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lf)
+    # from utils.plot import plot_lr_scheduler
     # plot_lr_scheduler(optimizer, scheduler, epochs)
 
     # EMA
@@ -278,7 +281,8 @@ def train(hyp, opt, device, tb_writer=None):
         augmentation_config=opt.augmentation_config,
         global_augmentation_probability=opt.augmentation_probability,
         mosaic_augmentation=not opt.no_mosaic_augmentation,
-        n_keypoints=n_keypoints
+        n_keypoints=n_keypoints,
+        predict_masks=opt.masks
     )
     mlc = np.concatenate(dataset.labels, 0)[:, 0].max()  # max label class
     n_batches = len(dataloader)  # number of batches
@@ -374,7 +378,7 @@ def train(hyp, opt, device, tb_writer=None):
         # b = int(random.uniform(0.25 * imgsz, 0.75 * imgsz + gs) // gs * gs)
         # dataset.mosaic_border = [b - imgsz, -b]  # height, width borders
 
-        mloss = torch.zeros(5, device=device)  # mean losses
+        mloss = torch.zeros(5, device=device)  # mean losses # TODO: 6
         if rank != -1:
             dataloader.sampler.set_epoch(epoch)
         pbar = enumerate(dataloader)
@@ -383,7 +387,7 @@ def train(hyp, opt, device, tb_writer=None):
             pbar = tqdm(pbar, total=n_batches)  # progress bar
         optimizer.zero_grad()
 
-        for i, (imgs, targets, paths, _) in pbar:  # batch -------------------------------------------------------------
+        for i, (imgs, targets, paths, _, masks) in pbar:  # batch -------------------------------------------------------------
             if opt.export_training_images and Path(opt.export_training_images).is_dir():
                 path_to_export = Path(opt.export_training_images) / opt.name
                 if not path_to_export.is_dir():
@@ -419,10 +423,18 @@ def train(hyp, opt, device, tb_writer=None):
             # Forward
             with amp.autocast(enabled=cuda):
                 pred = model(imgs)  # forward
-                if 'loss_ota' not in hyp or hyp['loss_ota'] == 1:
-                    loss, loss_items = compute_loss_ota(pred, targets.to(device), imgs)  # loss scaled by batch_size
+
+                if isinstance(pred, dict):  # maks is not None
+                    pred_ = pred["bbox_and_cls"]
+                    masks = masks.to(device).float()
                 else:
-                    loss, loss_items = compute_loss(pred, targets.to(device))  # loss scaled by batch_size
+                    pred_ = pred
+
+                if 'loss_ota' not in hyp or hyp['loss_ota'] == 1:
+                    # loss, loss_items = compute_loss_ota(pred, targets.to(device), imgs)  # loss scaled by batch_size
+                    loss, loss_items = compute_loss(pred_, targets.to(device), masks=masks)
+                else:
+                    loss, loss_items = compute_loss(pred_, targets.to(device), masks=masks)  # loss scaled by batch_size
 
                 if rank != -1:
                     loss *= opt.world_size  # gradient averaged between devices in DDP mode
@@ -484,12 +496,12 @@ def train(hyp, opt, device, tb_writer=None):
 
             # Write
             with open(results_file, 'a') as f:
-                f.write(s + '%10.4g' * 7 % results + '\n')  # append metrics, val_loss
+                f.write(s + '%10.4g' * 7 % results + '\n')  # append metrics, val_loss  # TODO: 8
             if len(opt.name) and opt.bucket:
                 os.system('gsutil cp %s gs://%s/results/results%s.txt' % (results_file, opt.bucket, opt.name))
 
             # Log
-            tags = ['train/box_loss', 'train/obj_loss', 'train/cls_loss', 'train/kpt_loss', # train loss
+            tags = ['train/box_loss', 'train/obj_loss', 'train/cls_loss', 'train/kpt_loss', # train loss  # TODO train/msk_loss
                     'metrics/precision', 'metrics/recall', 'metrics/mAP_0.5', 'metrics/mAP_0.5:0.95',
                     'val/box_loss', 'val/obj_loss', 'val/cls_loss',  # val loss
                     'x/lr0', 'x/lr1', 'x/lr2']  # params
@@ -631,11 +643,40 @@ if __name__ == '__main__':
                         help="Folder where to export the (augmented) training images to.")
     parser.add_argument("--no-mosaic-augmentation", action='store_true',
                         help="Do not apply mosaic augmentation.")
+    parser.add_argument('--masks', action='store_true', help='Models polygons within the bounding boxes.')
 
     opt = parser.parse_args()
 
 
+    # DEFAULT
+    opt.weights = "trained_models/yolov7-tiny.pt"
+    opt.name = "Test"
+    opt.device = "cpu"
+    opt.batch_size = 4
+    opt.epochs = 2
+    opt.albumentations_probability = 0.1
+    opt.noautoanchor = True
 
+    # BBOXES
+    opt.cfg = "cfg/training/yolov7-tiny-template.yaml"
+    opt.data = "data/CRURotorAssembly.yaml"
+    opt.augmentation_config = "data/augmentation-CRU.yaml"
+
+    # # MASK
+    opt.cfg = "cfg/training/yolov7-mask.yaml"
+    opt.data = "data/MetaLearnTest_Seg.yaml"
+    opt.weights = "trained_models/yolov7-mask.pt"
+    opt.masks = True
+    opt.no_mosaic_augmentation = True  # FIXME: mosaic augmentation not working for segments
+    opt.no_augmentation = True  # FIXME: scaling for albumentations
+
+    # # KEYPOINTS
+    # # TODO: keypoint anchors: uniform distribution np.random.random((n_anchors, 2))
+    # # TODO: augmentation: "manual" transformation/mirroring
+    # opt.cfg = "cfg/training/yolov7-tiny-kpt.yaml"
+    # opt.data = "data/keypoints.custom.yaml"
+    # opt.augmentation_config = "data/augmentation-yolov7.yaml"
+    # opt.no_augmentation = True
 
 
 

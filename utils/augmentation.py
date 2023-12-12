@@ -2,6 +2,7 @@ from pathlib import Path
 import yaml
 import re
 from ast import literal_eval
+import logging
 
 import albumentations as A
 import albumentations  # for eval()
@@ -29,8 +30,8 @@ def build_augmentation_pipeline(config_file: Union[str, Path], probability: floa
 
     # parse / cast function arguments
     config = parse_arguments(config_txt)
-    if verbose:
-        print(f"Augmentation specs: {config}")
+    # if verbose:
+    #     print(f"Augmentation specs: {config}")
 
     # create pipelines:
     # TODO: support other transformation packages
@@ -110,6 +111,7 @@ def build_albumentations_pipeline(
         # get transformation function
         transformation = getattr(A, fnc)(**opts)
         if verbose:
+            # logging.info(colorstr('albumentations: ') + str())
             print(transformation)
         trafo_fncs.append(transformation)
     return trafo_fncs
@@ -209,8 +211,8 @@ if __name__ == "__main__":
     build_augmentation_pipeline("../data/augmentation-yolov7.yaml")
 
     create_examples(
-    config_file="../data/augmentation-CRU.yaml",
-    image_dir=r"C:\Users\schwmax\Downloads\NewImages\231205_020556_0000000010_CAM1_NORMAL_OK.bmp",
-    export_dir="export",
-    oversampling=10
+        config_file="../data/augmentation-CRU.yaml",
+        image_dir=r"C:\Users\schwmax\Downloads\NewImages\231205_020556_0000000010_CAM1_NORMAL_OK.bmp",
+        export_dir="export",
+        oversampling=10
     )

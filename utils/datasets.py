@@ -22,6 +22,7 @@ from tqdm import tqdm
 from utils.general import (
     check_requirements,
     xyxy2xywh,
+    # xyxy2xywhn,  # TODO: why is normalization needed anyway?
     xywh2xyxy,
     xywhn2xyxy,
     xyn2xy,
@@ -33,6 +34,8 @@ from utils.general import (
 )
 from utils.torch_utils import torch_distributed_zero_first
 from utils.debugging import print_debug_msg
+from utils.segment import augmentations as segaug   # TODO: check code from mask branch
+
 from utils.augmentation import build_augmentation_pipeline
 
 from typing import Union, List, Tuple, Dict, Any
@@ -71,52 +74,65 @@ def exif_size(img: Image. Image) -> Tuple[int, int]:
     return s
 
 
-def create_dataloader(path, imgsz, batch_size, stride, opt,
-                      hyp=None,
-                      augment: bool = False,
-                      cache: bool = False,
-                      pad: float = 0.0,
-                      rect: bool = False,
-                      rank: int = -1,
-                      world_size: int = 1,
-                      workers: int = 8,
-                      image_weights: bool = False,
-                      quad: bool = False,
-                      prefix: str = '',
-                      augmentation_config: str = None,
-                      global_augmentation_probability: float = None,
-                      mosaic_augmentation: bool = True,
-                      n_keypoints: int = None
-                      ):
+def create_dataloader(
+        path,
+        imgsz,
+        batch_size,
+        stride,
+        opt,
+        hyp=None,
+        augment: bool = False,
+        cache: bool = False,
+        pad: float = 0.0,
+        rect: bool = False,
+        rank: int = -1,
+        world_size: int = 1,
+        workers: int = 8,
+        image_weights: bool = False,
+        quad: bool = False,
+        prefix: str = '',
+        augmentation_config: str = None,
+        global_augmentation_probability: float = None,
+        mosaic_augmentation: bool = True,
+        n_keypoints: int = None,
+):
     # Make sure only the first process in DDP process the dataset first, and the following others can use the cache
     with torch_distributed_zero_first(rank):
-        dataset = LoadImagesAndLabels(
-            path, imgsz, batch_size,
-            augment=augment,  # augment images
-            hyp=hyp,  # augmentation hyperparameters
-            rect=rect,  # rectangular training
-            cache_images=cache,
-            single_cls=opt.single_cls,
-            stride=int(stride),
-            pad=pad,
-            image_weights=image_weights,
-            prefix=prefix,
-            augmentation_config=augmentation_config,
-            augmentation_probability=global_augmentation_probability,
-            mosaic_augmentation=mosaic_augmentation,
-            n_keypoints=n_keypoints
-        )
+
+        kwargs = {
+            "path_to_data_info": path,
+            "img_size": imgsz,
+            "batch_size": batch_size,
+            "augment": augment,
+            "hyp": hyp,  # augmentation hyperparameters
+            "rect": rect,  # rectangular training
+            "cache_images": cache,
+            "single_cls": opt.single_cls,
+            "stride": int(stride),
+            "pad": pad,
+            "image_weights": image_weights,
+            "prefix": prefix,
+            "augmentation_config": augmentation_config,
+            "augmentation_probability": global_augmentation_probability,
+            "mosaic_augmentation": mosaic_augmentation,
+            "n_keypoints": n_keypoints
+        }
+
+        dataset = LoadImagesAndLabels(**kwargs)
+
     batch_size = min(batch_size, len(dataset))
-    nw = min([os.cpu_count() // world_size, batch_size if batch_size > 1 else 0, workers])  # number of workers
+    n_workers = min([os.cpu_count() // world_size, batch_size if batch_size > 1 else 0, workers])  # number of workers
     sampler = torch.utils.data.distributed.DistributedSampler(dataset) if rank != -1 else None
     loader = torch.utils.data.DataLoader if image_weights else InfiniteDataLoader
     # Use torch.utils.data.DataLoader() if dataset.properties will update during training else InfiniteDataLoader()
-    dataloader = loader(dataset,
-                        batch_size=batch_size,
-                        num_workers=nw,
-                        sampler=sampler,
-                        pin_memory=True,
-                        collate_fn=LoadImagesAndLabels.collate_fn4 if quad else LoadImagesAndLabels.collate_fn)
+    dataloader = loader(
+        dataset,
+        batch_size=batch_size,
+        num_workers=n_workers,
+        sampler=sampler,
+        pin_memory=True,
+        collate_fn=LoadImagesAndLabels.collate_fn4 if quad else LoadImagesAndLabelsWithMasks.collate_fn
+    ) # FIXME: LoadImagesAndLabelsWithMasks.collate_fn4
 
     return dataloader, dataset
 
@@ -308,16 +324,16 @@ class LoadStreams:  # multiple IP or RTSP cameras
         n = len(sources)
         self.imgs = [None] * n
         self.sources = [clean_str(x) for x in sources]  # clean source names for later
-        for i, s in enumerate(sources):
+        for i, src in enumerate(sources):
             # Start the thread to read frames from the video stream
-            print(f'{i + 1}/{n}: {s}... ', end='')
-            url = eval(s) if s.isnumeric() else s
+            print(f'{i + 1}/{n}: {src}... ', end='')
+            url = eval(src) if src.isnumeric() else src
             if 'youtube.com/' in str(url) or 'youtu.be/' in str(url):  # if source is YouTube video
                 check_requirements(('pafy', 'youtube_dl'))
                 import pafy
                 url = pafy.new(url).getbest(preftype="mp4").url
             cap = cv2.VideoCapture(url)
-            assert cap.isOpened(), f'Failed to open {s}'
+            assert cap.isOpened(), f'Failed to open {src}'
             w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             self.fps = cap.get(cv2.CAP_PROP_FPS) % 100
@@ -380,23 +396,25 @@ def img2label_paths(img_paths) -> List[Path]:
 
 
 class LoadImagesAndLabels(Dataset):  # for training/testing
-    def __init__(self, path_to_data_info: Union[str, Path],
-                 img_size: int = 640,
-                 batch_size: int = 16,
-                 augment: bool = False,
-                 hyp=None,
-                 rect: bool = False,
-                 image_weights: bool = False,
-                 cache_images: bool = False,
-                 single_cls: bool = False,
-                 stride: int = 32,
-                 pad: float = 0.0,
-                 prefix: str = "",
-                 augmentation_config: Union[str, Path] = None,
-                 augmentation_probability: float = None,
-                 mosaic_augmentation: bool = True,
-                 n_keypoints: int = None
-                 ):
+    def __init__(
+            self,
+            path_to_data_info: Union[str, Path],
+            img_size: int = 640,
+            batch_size: int = 16,
+            augment: bool = False,
+            hyp=None,
+            rect: bool = False,
+            image_weights: bool = False,
+            cache_images: bool = False,
+            single_cls: bool = False,
+            stride: int = 32,
+            pad: float = 0.0,
+            prefix: str = "",
+            augmentation_config: Union[str, Path] = None,
+            augmentation_probability: float = None,
+            mosaic_augmentation: bool = True,
+            n_keypoints: int = None
+            ):
         self.img_size = img_size
         self.augment = augment
         self.n_kpt = n_keypoints if n_keypoints else 0
@@ -563,24 +581,43 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                     n_found += 1  # label found
 
                     # read file with labels
-                    with open(lb_file, 'r') as fid:
-                        lines = [x.split() for x in fid.read().strip().splitlines()]
-                    # if any([len(x) > 8 for x in lines]):  # is segment
-                    #     # restructure if label is a "segment"
-                    #     classes = np.array([x[0] for x in lines], dtype=np.float32)
-                    #     segments = [np.array(x[1:], dtype=np.float32).reshape(-1, 2) for x in lines]  # (cls, xy1...)
-                    #     # build lines as were expected in the first place
-                    #     lines = np.concatenate((classes.reshape(-1, 1), segments2boxes(segments)), 1)  # (cls, xywh)
-                    # cast to floats (classes are supposed to be integers though)
-                    lines = np.array(lines, dtype=np.float32)
+                    with open(lb_file, "r") as fid:
+                        lines_raw = fid.readlines()
+                    lines = [ln.strip().split(" ") for ln in lines_raw]
+
+                    # determine label typ from annotations
+                    lengths = [len(el) for el in lines]
+                    if all([el == lengths[0] for el in lengths]):
+                        if lengths[0] == 5:  # class, x, y, w, h
+                            label_type = "bbox"
+                        elif (lengths[0] - 1) % 3 == 0 and self.n_kpt:  # TODO: keypoint flag is only required if all polygons are triangles...
+                            label_type = "keypoint"
+                        else:
+                            label_type = "segment"
+                    else:
+                        label_type = "segment"
+
+                    if label_type == "segment":  # is segment
+                        # restructure if label is a "segment"
+                        classes = np.array([x[0] for x in lines], dtype=np.float32)
+                        segments = [np.array(x[1:], dtype=np.float32).reshape(-1, 2) for x in lines]  # (cls, xy1...)
+                        # build lines as were expected in the first place
+                        lines = np.concatenate((classes.reshape(-1, 1), segments2boxes(segments)), 1)  # (cls, xywh)
+                    else:
+                        # cast to floats (classes are supposed to be integers though)
+                        lines = np.array(lines, dtype=np.float32)
+
                     # verify labels
                     if len(lines):
-                        if self.n_kpt:
+                        if label_type == "keypoint":
                             msg = f'labels require 5 + 3 * #keypoints columns for keypoints ' \
                                   f'(here: {self.sz_label} for {self.n_kpt} keypoints)'
-                        else:
+                        elif label_type == "segment":
+                            msg = f'labels require 1 + 3 * #points columns for polygon segments (restructured to 1 + 4)'
+                        else:  # bbox
                             msg = f'labels require 1 + 4 columns for bounding-boxes'
                         assert lines.shape[1] == self.sz_label, msg
+
                         assert (lines >= 0).all(), 'negative labels'
                         # bounding-boxes expect 4 (normalized) coordinates, keypoints 2 for each point
                         assert (lines[:, self.idx_c] <= 1).all(), 'non-normalized or out of bounds coordinate labels'
@@ -672,8 +709,10 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
             if random.random() < hyp['paste_in']:
                 sample_labels, sample_images, sample_masks = [], [], []
                 while len(sample_labels) < 30:
-                    sample_labels_, sample_images_, sample_masks_ = load_samples(self, random.randint(0,
-                                                                                                      len(self.labels) - 1))
+                    sample_labels_, sample_images_, sample_masks_ = load_samples(
+                        self,
+                        random.randint(0, len(self.labels) - 1)
+                    )
                     sample_labels += sample_labels_
                     sample_images += sample_images_
                     sample_masks += sample_masks_
@@ -707,18 +746,18 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         img = img[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3x416x416
         img = np.ascontiguousarray(img)
 
-        return torch.from_numpy(img), labels_out, self.img_files[index], shapes
+        return torch.from_numpy(img), labels_out, self.img_files[index], shapes, None
 
     @staticmethod
     def collate_fn(batch):
-        img, label, path, shapes = zip(*batch)  # transposed
+        img, label, path, shapes, masks = zip(*batch)  # transposed
         for i, lbl in enumerate(label):
             lbl[:, 0] = i  # add target image index for build_targets()
-        return torch.stack(img, 0), torch.cat(label, 0), path, shapes
+        return torch.stack(img, 0), torch.cat(label, 0), path, shapes, masks
 
     @staticmethod
     def collate_fn4(batch):
-        img, label, path, shapes = zip(*batch)  # transposed
+        img, label, path, shapes, masks = zip(*batch)  # transposed  # FIXME: masks4
         n = len(shapes) // 4
         img4, label4, path4, shapes4 = [], [], path[:n], shapes[:n]
 
@@ -740,7 +779,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         for i, lbl in enumerate(label4):
             lbl[:, 0] = i  # add target image index for build_targets()
 
-        return torch.stack(img4, 0), torch.cat(label4, 0), path4, shapes4
+        return torch.stack(img4, 0), torch.cat(label4, 0), path4, shapes4, masks
 
     @property
     def idx_c(self) -> List[int]:
@@ -782,6 +821,9 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
             bbx_size_repeated = np.hstack((bbx_size, ) * self.n_kpt)
             offset = np.hstack((xy1, ) * self.n_kpt)
             # labels[:, self.idx_c_kpt] = labels[:, self.idx_c_kpt] * bbx_size_repeated + offset
+        elif sz_lbl > 5 and (sz_lbl - 5) % 2 == 0:
+            # is polygon
+            pass
         else:
             msg = "Unexpected size of labels. "
             if self.n_kpt:
@@ -1174,8 +1216,17 @@ def letterbox(img, new_shape=(640, 640), color=(114, 114, 114), auto=True, scale
     return img, ratio, (dw, dh)
 
 
-def random_perspective(img, targets=(), segments=(), degrees=10, translate=.1, scale=.1, shear=10, perspective=0.0,
-                       border=(0, 0)):
+def random_perspective(
+        img,
+        targets=(),
+        segments=(),
+        degrees=10,
+        translate=.1,
+        scale=.1,
+        shear=10,
+        perspective=0.0,
+        border=(0, 0)
+):
     # torchvision.transforms.RandomAffine(degrees=(-10, 10), translate=(.1, .1), scale=(.9, 1.1), shear=(-10, 10))
     # targets = [cls, xyxy]
 
@@ -1407,7 +1458,7 @@ class Albumentations:
 
         logging.info(colorstr('albumentations: ') + ', '.join(f'{x}' for x in self.transform.transforms if x.p))
 
-    def __call__(self, im, labels, p=1.0):
+    def __call__(self, im: np. ndarray, labels: np. ndarray, p: float = 1.0):
         if self.transform and random.random() < p:
             new = self.transform(image=im, bboxes=labels[:, 1:], class_labels=labels[:, 0])  # transformed
             im, labels = new['image'], np.array([[c, *b] for c, b in zip(new['class_labels'], new['bboxes'])])
