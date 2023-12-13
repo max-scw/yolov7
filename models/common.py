@@ -29,7 +29,7 @@ def autopad(k, p=None):  # kernel, padding
 
 class MP(nn.Module):
     def __init__(self, k=2):
-        super(MP, self).__init__()
+        super().__init__()
         self.m = nn.MaxPool2d(kernel_size=k, stride=k)
 
     def forward(self, x):
@@ -38,7 +38,7 @@ class MP(nn.Module):
 
 class SP(nn.Module):
     def __init__(self, k=3, s=1):
-        super(SP, self).__init__()
+        super().__init__()
         self.m = nn.MaxPool2d(kernel_size=k, stride=s, padding=k // 2)
 
     def forward(self, x):
@@ -47,7 +47,7 @@ class SP(nn.Module):
     
 class ReOrg(nn.Module):
     def __init__(self):
-        super(ReOrg, self).__init__()
+        super().__init__()
 
     def forward(self, x):  # x(b,c,w,h) -> y(b,4c,w/2,h/2)
         return torch.cat([x[..., ::2, ::2], x[..., 1::2, ::2], x[..., ::2, 1::2], x[..., 1::2, 1::2]], 1)
@@ -95,7 +95,7 @@ class Refine(nn.Module):
 
 class Concat(nn.Module):
     def __init__(self, dimension=1):
-        super(Concat, self).__init__()
+        super().__init__()
         self.d = dimension
 
     def forward(self, x):
@@ -104,7 +104,7 @@ class Concat(nn.Module):
 
 class Chuncat(nn.Module):
     def __init__(self, dimension=1):
-        super(Chuncat, self).__init__()
+        super().__init__()
         self.d = dimension
 
     def forward(self, x):
@@ -119,7 +119,7 @@ class Chuncat(nn.Module):
 
 class Shortcut(nn.Module):
     def __init__(self, dimension=0):
-        super(Shortcut, self).__init__()
+        super().__init__()
         self.d = dimension
 
     def forward(self, x):
@@ -128,7 +128,7 @@ class Shortcut(nn.Module):
 
 class Foldcut(nn.Module):
     def __init__(self, dimension=0):
-        super(Foldcut, self).__init__()
+        super().__init__()
         self.d = dimension
 
     def forward(self, x):
@@ -139,7 +139,7 @@ class Foldcut(nn.Module):
 class Conv(nn.Module):
     # Standard convolution
     def __init__(self, c1, c2, k=1, s=1, p=None, g=1, act=True):  # ch_in, ch_out, kernel, stride, padding, groups
-        super(Conv, self).__init__()
+        super().__init__()
         self.conv = nn.Conv2d(c1, c2, k, s, autopad(k, p), groups=g, bias=False)
         self.bn = nn.BatchNorm2d(c2)
         self.act = nn.SiLU() if act is True else (act if isinstance(act, nn.Module) else nn.Identity())
@@ -154,7 +154,7 @@ class Conv(nn.Module):
 class RobustConv(nn.Module):
     # Robust convolution (use high kernel size 7-11 for: downsampling and other layers). Train for 300 - 450 epochs.
     def __init__(self, c1, c2, k=7, s=1, p=None, g=1, act=True, layer_scale_init_value=1e-6):  # ch_in, ch_out, kernel, stride, padding, groups
-        super(RobustConv, self).__init__()
+        super().__init__()
         self.conv_dw = Conv(c1, c1, k=k, s=s, p=p, g=c1, act=act)
         self.conv1x1 = nn.Conv2d(c1, c2, 1, 1, 0, groups=1, bias=True)
         self.gamma = nn.Parameter(layer_scale_init_value * torch.ones(c2)) if layer_scale_init_value > 0 else None
@@ -170,7 +170,7 @@ class RobustConv(nn.Module):
 class RobustConv2(nn.Module):
     # Robust convolution 2 (use [32, 5, 2] or [32, 7, 4] or [32, 11, 8] for one of the paths in CSP).
     def __init__(self, c1, c2, k=7, s=4, p=None, g=1, act=True, layer_scale_init_value=1e-6):  # ch_in, ch_out, kernel, stride, padding, groups
-        super(RobustConv2, self).__init__()
+        super().__init__()
         self.conv_strided = Conv(c1, c1, k=k, s=s, p=p, g=c1, act=act)
         self.conv_deconv = nn.ConvTranspose2d(in_channels=c1, out_channels=c2, kernel_size=s, stride=s, 
                                               padding=0, bias=True, dilation=1, groups=1
@@ -192,7 +192,7 @@ def DWConv(c1, c2, k=1, s=1, act=True):
 class GhostConv(nn.Module):
     # Ghost Convolution https://github.com/huawei-noah/ghostnet
     def __init__(self, c1, c2, k=1, s=1, g=1, act=True):  # ch_in, ch_out, kernel, stride, groups
-        super(GhostConv, self).__init__()
+        super().__init__()
         c_ = c2 // 2  # hidden channels
         self.cv1 = Conv(c1, c_, k, s, None, g, act)
         self.cv2 = Conv(c_, c_, 5, 1, None, c_, act)
@@ -205,7 +205,7 @@ class GhostConv(nn.Module):
 class Stem(nn.Module):
     # Stem
     def __init__(self, c1, c2, k=1, s=1, p=None, g=1, act=True):  # ch_in, ch_out, kernel, stride, padding, groups
-        super(Stem, self).__init__()
+        super().__init__()
         c_ = int(c2/2)  # hidden channels
         self.cv1 = Conv(c1, c_, 3, 2)
         self.cv2 = Conv(c_, c_, 1, 1)
@@ -221,7 +221,7 @@ class Stem(nn.Module):
 class DownC(nn.Module):
     # Spatial pyramid pooling layer used in YOLOv3-SPP
     def __init__(self, c1, c2, n=1, k=2):
-        super(DownC, self).__init__()
+        super().__init__()
         c_ = int(c1)  # hidden channels
         self.cv1 = Conv(c1, c_, 1, 1)
         self.cv2 = Conv(c_, c2//2, 3, k)
@@ -235,7 +235,7 @@ class DownC(nn.Module):
 class SPP(nn.Module):
     # Spatial pyramid pooling layer used in YOLOv3-SPP
     def __init__(self, c1, c2, k=(5, 9, 13)):
-        super(SPP, self).__init__()
+        super().__init__()
         c_ = c1 // 2  # hidden channels
         self.cv1 = Conv(c1, c_, 1, 1)
         self.cv2 = Conv(c_ * (len(k) + 1), c2, 1, 1)
@@ -249,7 +249,7 @@ class SPP(nn.Module):
 class Bottleneck(nn.Module):
     # Darknet bottleneck
     def __init__(self, c1, c2, shortcut=True, g=1, e=0.5):  # ch_in, ch_out, shortcut, groups, expansion
-        super(Bottleneck, self).__init__()
+        super().__init__()
         c_ = int(c2 * e)  # hidden channels
         self.cv1 = Conv(c1, c_, 1, 1)
         self.cv2 = Conv(c_, c2, 3, 1, g=g)
@@ -262,7 +262,7 @@ class Bottleneck(nn.Module):
 class Res(nn.Module):
     # ResNet bottleneck
     def __init__(self, c1, c2, shortcut=True, g=1, e=0.5):  # ch_in, ch_out, shortcut, groups, expansion
-        super(Res, self).__init__()
+        super().__init__()
         c_ = int(c2 * e)  # hidden channels
         self.cv1 = Conv(c1, c_, 1, 1)
         self.cv2 = Conv(c_, c_, 3, 1, g=g)
@@ -283,7 +283,7 @@ class ResX(Res):
 class Ghost(nn.Module):
     # Ghost Bottleneck https://github.com/huawei-noah/ghostnet
     def __init__(self, c1, c2, k=3, s=1):  # ch_in, ch_out, kernel, stride
-        super(Ghost, self).__init__()
+        super().__init__()
         c_ = c2 // 2
         self.conv = nn.Sequential(GhostConv(c1, c_, 1, 1),  # pw
                                   DWConv(c_, c_, k, s, act=False) if s == 2 else nn.Identity(),  # dw
@@ -302,7 +302,7 @@ class Ghost(nn.Module):
 class SPPCSPC(nn.Module):
     # CSP https://github.com/WongKinYiu/CrossStagePartialNetworks
     def __init__(self, c1, c2, n=1, shortcut=False, g=1, e=0.5, k=(5, 9, 13)):
-        super(SPPCSPC, self).__init__()
+        super().__init__()
         c_ = int(2 * c2 * e)  # hidden channels
         self.cv1 = Conv(c1, c_, 1, 1)
         self.cv2 = Conv(c1, c_, 1, 1)
@@ -347,7 +347,7 @@ class GhostStem(Stem):
 class BottleneckCSPA(nn.Module):
     # CSP https://github.com/WongKinYiu/CrossStagePartialNetworks
     def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5):  # ch_in, ch_out, number, shortcut, groups, expansion
-        super(BottleneckCSPA, self).__init__()
+        super().__init__()
         c_ = int(c2 * e)  # hidden channels
         self.cv1 = Conv(c1, c_, 1, 1)
         self.cv2 = Conv(c1, c_, 1, 1)
@@ -363,7 +363,7 @@ class BottleneckCSPA(nn.Module):
 class BottleneckCSPB(nn.Module):
     # CSP https://github.com/WongKinYiu/CrossStagePartialNetworks
     def __init__(self, c1, c2, n=1, shortcut=False, g=1, e=0.5):  # ch_in, ch_out, number, shortcut, groups, expansion
-        super(BottleneckCSPB, self).__init__()
+        super().__init__()
         c_ = int(c2)  # hidden channels
         self.cv1 = Conv(c1, c_, 1, 1)
         self.cv2 = Conv(c_, c_, 1, 1)
@@ -380,7 +380,7 @@ class BottleneckCSPB(nn.Module):
 class BottleneckCSPC(nn.Module):
     # CSP https://github.com/WongKinYiu/CrossStagePartialNetworks
     def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5):  # ch_in, ch_out, number, shortcut, groups, expansion
-        super(BottleneckCSPC, self).__init__()
+        super().__init__()
         c_ = int(c2 * e)  # hidden channels
         self.cv1 = Conv(c1, c_, 1, 1)
         self.cv2 = Conv(c1, c_, 1, 1)
@@ -472,7 +472,7 @@ class GhostCSPC(BottleneckCSPC):
 
 class ImplicitA(nn.Module):
     def __init__(self, channel, mean=0., std=.02):
-        super(ImplicitA, self).__init__()
+        super().__init__()
         self.channel = channel
         self.mean = mean
         self.std = std
@@ -484,12 +484,12 @@ class ImplicitA(nn.Module):
     
 
 class ImplicitM(nn.Module):
-    def __init__(self, channel, mean=1., std=.02):
-        super(ImplicitM, self).__init__()
-        self.channel = channel
+    def __init__(self, n_channels: int, mean: float = 1., std: float = .02):
+        super().__init__()
+        self.channel = n_channels
         self.mean = mean
         self.std = std
-        self.implicit = nn.Parameter(torch.ones(1, channel, 1, 1))
+        self.implicit = nn.Parameter(torch.ones(1, self.channel, 1, 1))
         nn.init.normal_(self.implicit, mean=self.mean, std=self.std)
 
     def forward(self, x):
@@ -505,7 +505,7 @@ class RepConv(nn.Module):
     # https://arxiv.org/abs/2101.03697
 
     def __init__(self, c1, c2, k=3, s=1, p=None, g=1, act=True, deploy=False):
-        super(RepConv, self).__init__()
+        super().__init__()
 
         self.deploy = deploy
         self.groups = g
@@ -836,7 +836,7 @@ class TransformerBlock(nn.Module):
 class Focus(nn.Module):
     # Focus wh information into c-space
     def __init__(self, c1, c2, k=1, s=1, p=None, g=1, act=True):  # ch_in, ch_out, kernel, stride, padding, groups
-        super(Focus, self).__init__()
+        super().__init__()
         self.conv = Conv(c1 * 4, c2, k, s, p, g, act)
         # self.contract = Contract(gain=2)
 
@@ -896,7 +896,7 @@ class NMS(nn.Module):
     classes = None  # (optional list) filter by class
 
     def __init__(self):
-        super(NMS, self).__init__()
+        super().__init__()
 
     def forward(self, x):
         return non_max_suppression(x[0], conf_thres=self.conf, iou_thres=self.iou, classes=self.classes)
@@ -909,7 +909,7 @@ class autoShape(nn.Module):
     classes = None  # (optional list) filter by class
 
     def __init__(self, model):
-        super(autoShape, self).__init__()
+        super().__init__()
         self.model = model.eval()
 
     def autoshape(self):
@@ -975,7 +975,7 @@ class autoShape(nn.Module):
 class Detections:
     # detections class for YOLOv5 inference results
     def __init__(self, imgs, pred, files, times=None, names=None, shape=None):
-        super(Detections, self).__init__()
+        super().__init__()
         d = pred[0].device  # device
         gn = [torch.tensor([*[im.shape[i] for i in [1, 0, 1, 0]], 1., 1.], device=d) for im in imgs]  # normalizations
         self.imgs = imgs  # list of images as numpy arrays
@@ -1055,7 +1055,7 @@ class Detections:
 class Classify(nn.Module):
     # Classification head, i.e. x(b,c1,20,20) to x(b,c2)
     def __init__(self, c1, c2, k=1, s=1, p=None, g=1):  # ch_in, ch_out, kernel, stride, padding, groups
-        super(Classify, self).__init__()
+        super().__init__()
         self.aap = nn.AdaptiveAvgPool2d(1)  # to x(b,c1,1,1)
         self.conv = nn.Conv2d(c1, c2, k, s, autopad(k, p), groups=g)  # to x(b,c2,1,1)
         self.flat = nn.Flatten()
@@ -1115,7 +1115,7 @@ class OREPA_3x3_RepConv(nn.Module):
                  stride=1, padding=0, dilation=1, groups=1,
                  internal_channels_1x1_3x3=None,
                  deploy=False, nonlinear=None, single_init=False):
-        super(OREPA_3x3_RepConv, self).__init__()
+        super().__init__()
         self.deploy = deploy
 
         if nonlinear is None:
@@ -1261,10 +1261,10 @@ class OREPA_3x3_RepConv(nn.Module):
 
         return self.nonlinear(self.bn(out))
 
-class RepConv_OREPA(nn.Module):
 
+class RepConv_OREPA(nn.Module):
     def __init__(self, c1, c2, k=3, s=1, padding=1, dilation=1, groups=1, padding_mode='zeros', deploy=False, use_se=False, nonlinear=nn.SiLU()):
-        super(RepConv_OREPA, self).__init__()
+        super().__init__()
         self.deploy = deploy
         self.groups = groups
         self.in_channels = c1
@@ -1510,7 +1510,6 @@ def window_reverse(windows, window_size, H, W):
 
 
 class SwinTransformerLayer(nn.Module):
-
     def __init__(self, dim, num_heads, window_size=8, shift_size=0,
                  mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0., drop_path=0.,
                  act_layer=nn.SiLU, norm_layer=nn.LayerNorm):
@@ -1642,7 +1641,7 @@ class SwinTransformerBlock(nn.Module):
 class STCSPA(nn.Module):
     # CSP Bottleneck https://github.com/WongKinYiu/CrossStagePartialNetworks
     def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5):  # ch_in, ch_out, number, shortcut, groups, expansion
-        super(STCSPA, self).__init__()
+        super().__init__()
         c_ = int(c2 * e)  # hidden channels
         self.cv1 = Conv(c1, c_, 1, 1)
         self.cv2 = Conv(c1, c_, 1, 1)
@@ -1660,7 +1659,7 @@ class STCSPA(nn.Module):
 class STCSPB(nn.Module):
     # CSP Bottleneck https://github.com/WongKinYiu/CrossStagePartialNetworks
     def __init__(self, c1, c2, n=1, shortcut=False, g=1, e=0.5):  # ch_in, ch_out, number, shortcut, groups, expansion
-        super(STCSPB, self).__init__()
+        super().__init__()
         c_ = int(c2)  # hidden channels
         self.cv1 = Conv(c1, c_, 1, 1)
         self.cv2 = Conv(c_, c_, 1, 1)
@@ -1679,7 +1678,7 @@ class STCSPB(nn.Module):
 class STCSPC(nn.Module):
     # CSP Bottleneck https://github.com/WongKinYiu/CrossStagePartialNetworks
     def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5):  # ch_in, ch_out, number, shortcut, groups, expansion
-        super(STCSPC, self).__init__()
+        super().__init__()
         c_ = int(c2 * e)  # hidden channels
         self.cv1 = Conv(c1, c_, 1, 1)
         self.cv2 = Conv(c1, c_, 1, 1)
@@ -2004,7 +2003,7 @@ class SwinTransformer2Block(nn.Module):
 class ST2CSPA(nn.Module):
     # CSP Bottleneck https://github.com/WongKinYiu/CrossStagePartialNetworks
     def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5):  # ch_in, ch_out, number, shortcut, groups, expansion
-        super(ST2CSPA, self).__init__()
+        super().__init__()
         c_ = int(c2 * e)  # hidden channels
         self.cv1 = Conv(c1, c_, 1, 1)
         self.cv2 = Conv(c1, c_, 1, 1)
@@ -2022,7 +2021,7 @@ class ST2CSPA(nn.Module):
 class ST2CSPB(nn.Module):
     # CSP Bottleneck https://github.com/WongKinYiu/CrossStagePartialNetworks
     def __init__(self, c1, c2, n=1, shortcut=False, g=1, e=0.5):  # ch_in, ch_out, number, shortcut, groups, expansion
-        super(ST2CSPB, self).__init__()
+        super().__init__()
         c_ = int(c2)  # hidden channels
         self.cv1 = Conv(c1, c_, 1, 1)
         self.cv2 = Conv(c_, c_, 1, 1)
@@ -2041,7 +2040,7 @@ class ST2CSPB(nn.Module):
 class ST2CSPC(nn.Module):
     # CSP Bottleneck https://github.com/WongKinYiu/CrossStagePartialNetworks
     def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5):  # ch_in, ch_out, number, shortcut, groups, expansion
-        super(ST2CSPC, self).__init__()
+        super().__init__()
         c_ = int(c2 * e)  # hidden channels
         self.cv1 = Conv(c1, c_, 1, 1)
         self.cv2 = Conv(c1, c_, 1, 1)
