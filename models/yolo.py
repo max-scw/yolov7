@@ -3,6 +3,7 @@ import logging
 import sys
 from copy import deepcopy
 from pathlib import Path
+import math
 
 from models.common import *
 from models.experimental import *
@@ -30,26 +31,26 @@ class Detect(nn.Module):
     include_nms = False
     concat = False
 
-    def __init__(self, nc=80, anchors=(), ch=()):  # detection layer
+    def __init__(self, n_classes=80, anchors=(), ch=()):  # detection layer
         super(Detect, self).__init__()
-        self.nc = nc  # number of classes
-        self.no = nc + 5  # number of outputs per anchor
-        self.nl = len(anchors)  # number of detection layers
-        self.na = len(anchors[0]) // 2  # number of anchors
-        self.grid = [torch.zeros(1)] * self.nl  # init grid
-        a = torch.tensor(anchors).float().view(self.nl, -1, 2)
+        self.n_classes = n_classes  # number of classes
+        self.n_out = n_classes + 5  # number of outputs per anchor
+        self.n_layers = len(anchors)  # number of detection layers
+        self.n_anchors = len(anchors[0]) // 2  # number of anchors
+        self.grid = [torch.zeros(1)] * self.n_layers  # init grid
+        a = torch.tensor(anchors).float().view(self.n_layers, -1, 2)
         self.register_buffer('anchors', a)  # shape(nl,na,2)
-        self.register_buffer('anchor_grid', a.clone().view(self.nl, 1, -1, 1, 1, 2))  # shape(nl,1,na,1,1,2)
-        self.m = nn.ModuleList(nn.Conv2d(x, self.no * self.na, 1) for x in ch)  # output conv
+        self.register_buffer('anchor_grid', a.clone().view(self.n_layers, 1, -1, 1, 1, 2))  # shape(nl,1,na,1,1,2)
+        self.m = nn.ModuleList(nn.Conv2d(x, self.n_out * self.n_anchors, 1) for x in ch)  # output conv
 
     def forward(self, x):
         # x = x.copy()  # for profiling
         z = []  # inference output
         self.training |= self.export
-        for i in range(self.nl):
+        for i in range(self.n_layers):
             x[i] = self.m[i](x[i])  # conv
             bs, _, ny, nx = x[i].shape  # x(bs,255,20,20) to x(bs,3,20,20,85)
-            x[i] = x[i].view(bs, self.na, self.no, ny, nx).permute(0, 1, 3, 4, 2).contiguous()
+            x[i] = x[i].view(bs, self.n_anchors, self.n_out, ny, nx).permute(0, 1, 3, 4, 2).contiguous()
 
             if not self.training:  # inference
                 if self.grid[i].shape[2:4] != x[i].shape[2:4]:
@@ -59,11 +60,11 @@ class Detect(nn.Module):
                     y[..., 0:2] = (y[..., 0:2] * 2. - 0.5 + self.grid[i]) * self.stride[i]  # xy
                     y[..., 2:4] = (y[..., 2:4] * 2) ** 2 * self.anchor_grid[i]  # wh
                 else:
-                    xy, wh, conf = y.split((2, 2, self.nc + 1), 4)  # y.tensor_split((2, 4, 5), 4)  # torch 1.8.0
+                    xy, wh, conf = y.split((2, 2, self.n_classes + 1), 4)  # y.tensor_split((2, 4, 5), 4)  # torch 1.8.0
                     xy = xy * (2. * self.stride[i]) + (self.stride[i] * (self.grid[i] - 0.5))  # new xy
                     wh = wh ** 2 * (4 * self.anchor_grid[i].data)  # new wh
                     y = torch.cat((xy, wh, conf), 4)
-                z.append(y.view(bs, -1, self.no))
+                z.append(y.view(bs, -1, self.n_out))
 
         if self.training:
             out = x
@@ -108,10 +109,10 @@ class IDetect(nn.Module):
     include_nms = False
     concat = False
 
-    def __init__(self, nc: int = 80, anchors=(), ch=()):  # detection layer
+    def __init__(self, n_classes: int = 80, anchors=(), ch=()):  # detection layer
         super(IDetect, self).__init__()
-        self.n_classes = nc  # number of classes
-        self.n_out = nc + 5  # number of outputs per anchor
+        self.n_classes = n_classes  # number of classes
+        self.n_out = n_classes + 5  # number of outputs per anchor
         self.n_layers = len(anchors)  # number of detection layers
         self.n_anchors = len(anchors[0]) // 2  # number of anchors
         self.grid = [torch.zeros(1)] * self.n_layers  # init grid
@@ -325,14 +326,26 @@ class IKeypoint(nn.Module):
         return torch.stack((xv, yv), 2).view((1, 1, ny, nx, 2)).float()
 
 
+class ISegment(IDetect):
+    # YOLOR Segment head for segmentation models
+    def __init__(self, n_classes: int = 80, anchors=(), n_masks: int = 32, n_protos: int = 256, ch=()):
+        super().__init__(n_classes, anchors, ch)
+        self.n_masks = n_masks  # number of masks
+        self.n_protos = n_protos  # number of protos
+        self.n_out = 5 + n_classes + self.n_masks  # number of outputs per anchor
+        self.m = nn.ModuleList(nn.Conv2d(x, self.n_out * self.n_anchors, 1) for x in ch)  # output conv
+        self.proto = Proto(ch[0], self.n_protos, self.n_masks)  # protos
+        self.detect = IDetect.forward
+
+
 class MT(nn.Module):
     stride = None  # strides computed during build
     export = False  # onnx export
 
-    def __init__(self, nc: int = 80, anchors=(), attn=None, mask_iou: bool = False, ch=()):  # detection layer
+    def __init__(self, n_classes: int = 80, anchors=(), attn=None, mask_iou: bool = False, ch=()):  # detection layer
         super(MT, self).__init__()
-        self.n_classes = nc  # number of classes
-        self.n_out = nc + 5  # number of outputs per anchor
+        self.n_classes = n_classes  # number of classes
+        self.n_out = n_classes + 5  # number of outputs per anchor
         self.n_layers = len(anchors)  # number of detection layers
         self.n_anchors = len(anchors[0]) // 2  # number of anchors
         self.grid = [torch.zeros(1)] * self.n_layers  # init grid
@@ -414,34 +427,34 @@ class IAuxDetect(nn.Module):
     include_nms = False
     concat = False
 
-    def __init__(self, nc=80, anchors=(), ch=()):  # detection layer
+    def __init__(self, n_classes=80, anchors=(), ch=()):  # detection layer
         super(IAuxDetect, self).__init__()
-        self.nc = nc  # number of classes
-        self.no = nc + 5  # number of outputs per anchor
-        self.nl = len(anchors)  # number of detection layers
-        self.na = len(anchors[0]) // 2  # number of anchors
-        self.grid = [torch.zeros(1)] * self.nl  # init grid
-        a = torch.tensor(anchors).float().view(self.nl, -1, 2)
+        self.n_classes = n_classes  # number of classes
+        self.n_out = n_classes + 5  # number of outputs per anchor
+        self.n_layers = len(anchors)  # number of detection layers
+        self.n_anchors = len(anchors[0]) // 2  # number of anchors
+        self.grid = [torch.zeros(1)] * self.n_layers  # init grid
+        a = torch.tensor(anchors).float().view(self.n_layers, -1, 2)
         self.register_buffer('anchors', a)  # shape(nl,na,2)
-        self.register_buffer('anchor_grid', a.clone().view(self.nl, 1, -1, 1, 1, 2))  # shape(nl,1,na,1,1,2)
-        self.m = nn.ModuleList(nn.Conv2d(x, self.no * self.na, 1) for x in ch[:self.nl])  # output conv
-        self.m2 = nn.ModuleList(nn.Conv2d(x, self.no * self.na, 1) for x in ch[self.nl:])  # output conv
+        self.register_buffer('anchor_grid', a.clone().view(self.n_layers, 1, -1, 1, 1, 2))  # shape(nl,1,na,1,1,2)
+        self.m = nn.ModuleList(nn.Conv2d(x, self.n_out * self.n_anchors, 1) for x in ch[:self.n_layers])  # output conv
+        self.m2 = nn.ModuleList(nn.Conv2d(x, self.n_out * self.n_anchors, 1) for x in ch[self.n_layers:])  # output conv
         
-        self.ia = nn.ModuleList(ImplicitA(x) for x in ch[:self.nl])
-        self.im = nn.ModuleList(ImplicitM(self.no * self.na) for _ in ch[:self.nl])
+        self.ia = nn.ModuleList(ImplicitA(x) for x in ch[:self.n_layers])
+        self.im = nn.ModuleList(ImplicitM(self.n_out * self.n_anchors) for _ in ch[:self.n_layers])
 
     def forward(self, x):
         # x = x.copy()  # for profiling
         z = []  # inference output
         self.training |= self.export
-        for i in range(self.nl):
+        for i in range(self.n_layers):
             x[i] = self.m[i](self.ia[i](x[i]))  # conv
             x[i] = self.im[i](x[i])
             bs, _, ny, nx = x[i].shape  # x(bs,255,20,20) to x(bs,3,20,20,85)
-            x[i] = x[i].view(bs, self.na, self.no, ny, nx).permute(0, 1, 3, 4, 2).contiguous()
+            x[i] = x[i].view(bs, self.n_anchors, self.n_out, ny, nx).permute(0, 1, 3, 4, 2).contiguous()
             
-            x[i+self.nl] = self.m2[i](x[i+self.nl])
-            x[i+self.nl] = x[i+self.nl].view(bs, self.na, self.no, ny, nx).permute(0, 1, 3, 4, 2).contiguous()
+            x[i + self.n_layers] = self.m2[i](x[i + self.n_layers])
+            x[i + self.n_layers] = x[i + self.n_layers].view(bs, self.n_anchors, self.n_out, ny, nx).permute(0, 1, 3, 4, 2).contiguous()
 
             if not self.training:  # inference
                 if self.grid[i].shape[2:4] != x[i].shape[2:4]:
@@ -452,22 +465,22 @@ class IAuxDetect(nn.Module):
                     y[..., 0:2] = (y[..., 0:2] * 2. - 0.5 + self.grid[i]) * self.stride[i]  # xy
                     y[..., 2:4] = (y[..., 2:4] * 2) ** 2 * self.anchor_grid[i]  # wh
                 else:
-                    xy, wh, conf = y.split((2, 2, self.nc + 1), 4)  # y.tensor_split((2, 4, 5), 4)  # torch 1.8.0
+                    xy, wh, conf = y.split((2, 2, self.n_classes + 1), 4)  # y.tensor_split((2, 4, 5), 4)  # torch 1.8.0
                     xy = xy * (2. * self.stride[i]) + (self.stride[i] * (self.grid[i] - 0.5))  # new xy
                     wh = wh ** 2 * (4 * self.anchor_grid[i].data)  # new wh
                     y = torch.cat((xy, wh, conf), 4)
-                z.append(y.view(bs, -1, self.no))
+                z.append(y.view(bs, -1, self.n_out))
 
-        return x if self.training else (torch.cat(z, 1), x[:self.nl])
+        return x if self.training else (torch.cat(z, 1), x[:self.n_layers])
 
     def fuseforward(self, x):
         # x = x.copy()  # for profiling
         z = []  # inference output
         self.training |= self.export
-        for i in range(self.nl):
+        for i in range(self.n_layers):
             x[i] = self.m[i](x[i])  # conv
             bs, _, ny, nx = x[i].shape  # x(bs,255,20,20) to x(bs,3,20,20,85)
-            x[i] = x[i].view(bs, self.na, self.no, ny, nx).permute(0, 1, 3, 4, 2).contiguous()
+            x[i] = x[i].view(bs, self.n_anchors, self.n_out, ny, nx).permute(0, 1, 3, 4, 2).contiguous()
 
             if not self.training:  # inference
                 if self.grid[i].shape[2:4] != x[i].shape[2:4]:
@@ -481,7 +494,7 @@ class IAuxDetect(nn.Module):
                     xy = (y[..., 0:2] * 2. - 0.5 + self.grid[i]) * self.stride[i]  # xy
                     wh = (y[..., 2:4] * 2) ** 2 * self.anchor_grid[i].data  # wh
                     y = torch.cat((xy, wh, y[..., 4:]), -1)
-                z.append(y.view(bs, -1, self.no))
+                z.append(y.view(bs, -1, self.n_out))
 
         if self.training:
             out = x
@@ -537,28 +550,28 @@ class IBin(nn.Module):
     stride = None  # strides computed during build
     export = False  # onnx export
 
-    def __init__(self, nc: int = 80, anchors=(), ch=(), bin_count: int = 21):  # detection layer
+    def __init__(self, n_classes: int = 80, anchors=(), ch=(), bin_count: int = 21):  # detection layer
         super(IBin, self).__init__()
-        self.nc = nc  # number of classes
+        self.n_classes = n_classes  # number of classes
         self.bin_count = bin_count
 
         self.w_bin_sigmoid = SigmoidBin(bin_count=self.bin_count, min=0.0, max=4.0)
         self.h_bin_sigmoid = SigmoidBin(bin_count=self.bin_count, min=0.0, max=4.0)
         # classes, x,y,obj
-        self.no = nc + 3 + \
-            self.w_bin_sigmoid.get_length() + self.h_bin_sigmoid.get_length()   # w-bce, h-bce
+        self.n_out = n_classes + 3 + \
+                     self.w_bin_sigmoid.get_length() + self.h_bin_sigmoid.get_length()   # w-bce, h-bce
             # + self.x_bin_sigmoid.get_length() + self.y_bin_sigmoid.get_length()
 
-        self.nl = len(anchors)  # number of detection layers
-        self.na = len(anchors[0]) // 2  # number of anchors
-        self.grid = [torch.zeros(1)] * self.nl  # init grid
-        a = torch.tensor(anchors).float().view(self.nl, -1, 2)
+        self.n_layers = len(anchors)  # number of detection layers
+        self.n_anchors = len(anchors[0]) // 2  # number of anchors
+        self.grid = [torch.zeros(1)] * self.n_layers  # init grid
+        a = torch.tensor(anchors).float().view(self.n_layers, -1, 2)
         self.register_buffer('anchors', a)  # shape(nl,na,2)
-        self.register_buffer('anchor_grid', a.clone().view(self.nl, 1, -1, 1, 1, 2))  # shape(nl,1,na,1,1,2)
-        self.m = nn.ModuleList(nn.Conv2d(x, self.no * self.na, 1) for x in ch)  # output conv
+        self.register_buffer('anchor_grid', a.clone().view(self.n_layers, 1, -1, 1, 1, 2))  # shape(nl,1,na,1,1,2)
+        self.m = nn.ModuleList(nn.Conv2d(x, self.n_out * self.n_anchors, 1) for x in ch)  # output conv
 
         self.ia = nn.ModuleList(ImplicitA(x) for x in ch)
-        self.im = nn.ModuleList(ImplicitM(self.no * self.na) for _ in ch)
+        self.im = nn.ModuleList(ImplicitM(self.n_out * self.n_anchors) for _ in ch)
 
     def forward(self, x):
 
@@ -570,11 +583,11 @@ class IBin(nn.Module):
         # x = x.copy()  # for profiling
         z = []  # inference output
         self.training |= self.export
-        for i in range(self.nl):
+        for i in range(self.n_layers):
             x[i] = self.m[i](self.ia[i](x[i]))  # conv
             x[i] = self.im[i](x[i])
             bs, _, ny, nx = x[i].shape  # x(bs,255,20,20) to x(bs,3,20,20,85)
-            x[i] = x[i].view(bs, self.na, self.no, ny, nx).permute(0, 1, 3, 4, 2).contiguous()
+            x[i] = x[i].view(bs, self.n_anchors, self.n_out, ny, nx).permute(0, 1, 3, 4, 2).contiguous()
 
             if not self.training:  # inference
                 if self.grid[i].shape[2:4] != x[i].shape[2:4]:
@@ -846,12 +859,12 @@ def parse_model(data_dict, ch):  # model_dict, input_channels(3)
     logger.info('\n%3s%18s%3s%10s  %-40s%-30s' % ('', 'from', 'n', 'params', 'module', 'arguments'))
     # do not rename variables due to eval() function!
     anchors = data_dict['anchors']
-    nc = data_dict['nc']  # number of classes
+    n_classes = data_dict['nc']  # number of classes
     gd = data_dict['depth_multiple']  # gain depth
     gw = data_dict['width_multiple']  # gain width
-    nkpt = data_dict['nkpt'] if 'nkpt' in data_dict else 'nkpt'  # number of keypoints
-    na = (len(anchors[0]) // 2) if isinstance(anchors, list) else anchors  # number of anchors
-    no = na * (nc + 5)  # number of outputs = anchors * (classes + 5)
+    n_keypts = data_dict['nkpt'] if 'nkpt' in data_dict else 'nkpt'  # number of keypoints
+    n_anchors = (len(anchors[0]) // 2) if isinstance(anchors, list) else anchors  # number of anchors
+    n_out = n_anchors * (n_classes + 5)  # number of outputs = anchors * (classes + 5)
 
     layers, save, c2 = [], [], ch[-1]  # layers, savelist, ch out
     for i, (from_layer, n_filter, module, args) in enumerate(data_dict['backbone'] + data_dict['head']):  # from, number, module, args
@@ -875,7 +888,7 @@ def parse_model(data_dict, ch):  # model_dict, input_channels(3)
                       SwinTransformerBlock, STCSPA, STCSPB, STCSPC,
                       SwinTransformer2Block, ST2CSPA, ST2CSPB, ST2CSPC]:
             c1, c2 = ch[from_layer], args[0]
-            if c2 != no:  # if not output
+            if c2 != n_out:  # if not output
                 c2 = make_divisible(c2 * gw, 8)
 
             args = [c1, c2, *args[1:]]
@@ -954,13 +967,3 @@ if __name__ == '__main__':
         img = torch.rand(1, 3, 640, 640).to(device)
         y = model(img, profile=True)
 
-    # Profile
-    # img = torch.rand(8 if torch.cuda.is_available() else 1, 3, 640, 640).to(device)
-    # y = model(img, profile=True)
-
-    # Tensorboard
-    # from torch.utils.tensorboard import SummaryWriter
-    # tb_writer = SummaryWriter()
-    # print("Run 'tensorboard --logdir=models/runs' to view tensorboard at http://localhost:6006/")
-    # tb_writer.add_graph(model.model, img)  # add model to tensorboard
-    # tb_writer.add_image('test', img[0], dataformats='CWH')  # add model to tensorboard
