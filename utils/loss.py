@@ -8,7 +8,7 @@ from torch.nn.functional import one_hot, binary_cross_entropy_with_logits
 from utils.general import bbox_iou, bbox_alpha_iou, box_iou, box_giou, box_diou, box_ciou, xywh2xyxy, crop_masks
 from utils.torch_utils import is_parallel
 
-from typing import List, Union
+from typing import List, Union, Dict
 
 
 def smooth_BCE(eps=0.1):  # https://github.com/ultralytics/yolov3/issues/238#issuecomment-598028441
@@ -427,6 +427,7 @@ class APLoss(torch.autograd.Function):
 
 
 class ComputeLoss:
+    # target_type = "bbox"
     # Compute losses
     def __init__(self, model, autobalance=False, overlap=False):
         super().__init__()
@@ -460,25 +461,37 @@ class ComputeLoss:
     def __call__(self, predictions, targets, masks=None):  # predictions, targets, model
         device = targets.device
 
-        # p, proto = predictions
         # batch_size, n_masks, mask_h, mask_w = proto.shape  # batch size, number of masks, mask height, mask width
-        n_masks, mask_h, mask_w = masks.shape if masks is not None else (0, 0, 0)
-        n_kpts = predictions[0].shape[-1] - (5 + self.n_classes) if masks is None else 0
-        assert n_kpts % 3 == 0
-        n_add = max((n_masks, n_kpts))
+        # n_masks, mask_h, mask_w = masks.shape if masks is not None else (0, 0, 0)
+
+        if isinstance(predictions, tuple) and len(predictions) == 2:
+            target_type = "segment"
+            predictions_, proto = predictions
+            # p, proto = predictions
+            batch_size, n_masks, mask_h, mask_w = proto.shape
+
+            n_add = n_masks
+        else:
+            predictions_ = predictions
+
+            n_add = predictions_[0].shape[-1] - (5 + self.n_classes)
+            if n_add > 0:
+                target_type = "keypoint"
+                assert n_add % 3 == 0, "Keypoints expected but input has unexpected shape"
+                n_kpts = int(n_add // 3)
+            else:
+                target_type = "bbox"
+        self.target_type = target_type
+        self.n_add = n_add
 
         # initialize losses (classes, bounding boxes, objectness)
-        loss_cls = torch.zeros(1, device=device)
-        loss_box = torch.zeros(1, device=device)
-        loss_obj = torch.zeros(1, device=device)
-        loss_kpt = torch.zeros(1, device=device)
-        loss_seg = torch.zeros(1, device=device)
+        loss_types = ["cls", "box", "obj", "add"]
+        losses: Dict[str, torch.Tensor] = {ky: torch.zeros(1, device=device) for ky in loss_types}
 
-        targets_cls, targets_box, targets_add, indices, anchors, target_idxs, xywh_norm = self.build_targets(predictions, targets)  # targets  # FIXME: build targets for segments
-        # targets_cls, targets_box, targets_kpt, indices, anchors, tidxs, xywhn = self.build_targets(predictions, targets)  # targets  # FIXME: build targets for segments
+        targets_cls, targets_box, targets_add, indices, anchors, target_idxs, xywh_norm = self.build_targets(predictions_, targets)  # targets  # FIXME: build targets for segments
 
         # Losses
-        for i, prd_i in enumerate(predictions):  # layer index, layer predictions
+        for i, prd_i in enumerate(predictions_):  # layer index, layer predictions
             b, a, gj, gi = indices[i]  # image, anchor, gridy, gridx
             target_obj = torch.zeros_like(prd_i[..., 0], device=device)  # target obj
 
@@ -486,18 +499,12 @@ class ComputeLoss:
             if n_targets:
                 prd_xy, prd_wh, _, prd_cls, prd_add = prd_i[b, a, gj, gi].split((2, 2, 1, self.n_classes, n_add), 1)
 
-                # prd_subset = prd_i[b, a, gj, gi]  # prediction subset corresponding to targets
-                # prd_xy = prd_subset[:, :2]
-                # prd_wh = prd_subset[:, 2:4]
-                # prd_cls = prd_subset[:, 5:5 + self.n_classes]  # one-hot encoded classes => this is a matrix
-                # prd_msk = prd_subset[:, 5 + self.n_classes:]
-
                 # Regression
                 pxy = prd_xy.sigmoid() * 2. - 0.5
                 pwh = (prd_wh.sigmoid() * 2) ** 2 * anchors[i]
                 pbox = torch.cat((pxy, pwh), 1)  # predicted box
                 iou = bbox_iou(pbox.T, targets_box[i], x1y1x2y2=False, CIoU=True)  # iou(prediction, target)
-                loss_box += (1.0 - iou).mean()  # iou loss
+                losses["box"] += (1.0 - iou).mean()  # iou loss
 
                 # Objectness
                 target_obj[b, a, gj, gi] = (1.0 - self.gr) + self.gr * iou.detach().clamp(0).type(target_obj.dtype)  # iou ratio
@@ -507,20 +514,17 @@ class ComputeLoss:
                     t = torch.full_like(prd_cls, self.cn, device=device)  # targets
                     t[range(n_targets), targets_cls[i]] = self.cp
                     # t[t==self.cp] = iou.detach().clamp(0).type(t.dtype)
-                    loss_cls += self.BCEcls(prd_cls, t)  # BCE
+                    losses["cls"] += self.BCEcls(prd_cls, t)  # BCE
 
                 # Mask regression
-                if masks is not None:
-                    # p, proto = preds
-                    # bs, nm, mask_h, mask_w = proto.shape  # batch size, number of masks, mask height, mask width
-
-                    if tuple(masks.shape[-2:]) != (mask_h, mask_w):  # downsample
+                if target_type == "segment":
+                    if tuple(masks.shape[-2:]) != (mask_h, mask_w):  # downsample if sizes do not match
                         masks = nn.functional.interpolate(
-                            masks[None],
+                            masks[None].float(),
                             size=(mask_h, mask_w),
                             mode="bilinear",
                             align_corners=False
-                        )[0]
+                        )[0]#.type_as(masks)
                     mask_area = xywh_norm[i][:, 2:].prod(1)  # mask width, height normalized
                     mxyxy = xywh2xyxy(xywh_norm[i] * torch.tensor([mask_w, mask_h, mask_w, mask_h], device=device))
                     for bi in b.unique():
@@ -529,15 +533,14 @@ class ComputeLoss:
                             mask_gti = torch.where(masks[bi][None] == target_idxs[i][j].view(-1, 1, 1), 1.0, 0.0)
                         else:
                             mask_gti = masks[target_idxs[i]][j]
-                        loss_seg += self.single_mask_loss(mask_gti, prd_add[j], proto[bi], mxyxy[j], mask_area[j])
-                elif targets_add[i].numel() > 0:
+                        losses["add"] += self.single_mask_loss(mask_gti, prd_add[j], proto[bi], mxyxy[j], mask_area[j])
+                elif target_type == "keypoint":
                     # key point loss
                     predicted_keypoints = prd_add  # Get predicted keypoints
-                    loss_kpt += nn.functional.mse_loss(predicted_keypoints, targets_add[i])  # Calculate keypoint loss: MSE
-
+                    losses["add"] += nn.functional.mse_loss(predicted_keypoints, targets_add[i])  # Calculate keypoint loss: MSE
 
             obji = self.BCEobj(prd_i[..., 4], target_obj)
-            loss_obj += obji * self.balance[i]  # obj loss
+            losses["obj"] += obji * self.balance[i]  # obj loss
             if self.autobalance:
                 self.balance[i] = self.balance[i] * 0.9999 + 0.0001 / obji.detach().item()
 
@@ -547,19 +550,22 @@ class ComputeLoss:
         batch_sz = target_obj.shape[0]  # batch size
 
         # weight losses by hyperparameters before aggregating them
-        loss_box *= self.hyp['box']
-        loss_obj *= self.hyp['obj']
-        loss_cls *= self.hyp['cls']
-        loss_kpt *= self.hyp['kpt'] if "kpt" in self.hyp else 1.0  # weight the keypoint loss
-        loss_seg *= self.hyp['msk'] if "msk" in self.hyp else self.hyp['box'] / batch_sz  # weight the segmentation loss
+        for ky in losses:
+            factor = 1.0
+            if ky in self.hyp:
+                factor = self.hyp[ky]
+            elif ky == "add":
+                if target_type == "segment":
+                    factor = self.hyp['box'] / batch_sz
 
-        loss = loss_box + loss_obj + loss_cls + loss_kpt + loss_seg
-        # return loss * batch_sz, torch.cat((loss_box, loss_obj, loss_cls, loss)).detach()
-        return loss * batch_sz, torch.cat((loss_box, loss_obj, loss_cls, loss_kpt, loss)).detach() # TODO add loss_seg
+            losses[ky] *= factor
+
+        loss = sum(losses.values())
+        return loss * batch_sz, torch.cat(tuple(losses.values()) + (loss, )).detach()
 
     def single_mask_loss(self, gt_mask, pred, proto, xyxy, area):
         # Mask loss for one image
-        pred_mask = (pred @ proto.view(self.n_masks, -1)).view(-1, *proto.shape[1:])  # (n,32) @ (32,80,80) -> (n,80,80)  # n_masks = nm in original code
+        pred_mask = (pred @ proto.view(self.n_add, -1)).view(-1, *proto.shape[1:])  # (n,32) @ (32,80,80) -> (n,80,80)  # n_masks = nm in original code
         loss = nn.functional.binary_cross_entropy_with_logits(pred_mask, gt_mask, reduction="none")
         return (crop_masks(loss, xyxy).mean(dim=(1, 2)) / area).mean()
 
@@ -579,21 +585,13 @@ class ComputeLoss:
         idx_add = [i for i in range(6, sz_label)]
         idx_anchor = sz_label
 
-        if sz_label == sz_label_bbox:
-            label_type = "bbox"  # bounding-box (standard)
-        elif sz_label > sz_label_bbox and sz_label % 3 == 0:
-            # keypoints as target:
-            # (image in batch, class, x, y, w, h, k1x, k1y, k1visibility, ...)
-            label_type = "kpt"  # keypoints
-        elif sz_label > sz_label_bbox and sz_label % 2 == 0:
-            label_type = "mask"  # segmentation
-            # FIXME: how to distinguish mask and bounding boxes?
-        else:
-            raise Exception(
-                f"Unexpected shape of the targets. "
-                f"Expecting 6 entries for bounding-boxes, 6 + %3 for keyoints, "
-                f"or 6 + %2 for polygons/segments. But the shape of the label was {sz_label}."
-            )
+        msg = "Unexpected shape of the targets. Expecting {} entries for {} but the shape of the label was {}."
+        if self.target_type == "bbox":
+            assert sz_label == sz_label_bbox, msg.format("6", "bounding-boxes", sz_label)
+        elif self.target_type == "keypoint":
+            assert sz_label % 3 == 0, msg.format("6 + 3%", "key-points", sz_label)
+        elif self.target_type == "segment":
+            assert sz_label % 2 == 0, msg.format("6 + %2", "polygons/segments", sz_label)
 
         # Build targets for compute_loss(), input targets(image, class, x, y, w, h)
 
@@ -601,9 +599,11 @@ class ComputeLoss:
         n_anchors = self.n_anchors
         n_targets = targets.shape[0]
 
+        # initialize lists
         target_cls, target_box, target_add, indices, all_anchors, target_idxs, xywh_norm = [], [], [], [], [], [], []
+
         # initialize union gain (i.e. [1, 1, 1, ...])
-        gain = torch.ones(sz_label + 2, device=device).long()  # normalized to grid-space gain
+        gain = torch.ones(6 + 2, device=device).long()  # normalized to grid-space gain
         # initialize indices for anchors as matrix for later reshaping:
         # anchor_indices = [[0, 0, 0, ... * n_targets],
         #                   [1, 1, 1, ... * n_targets],
@@ -617,7 +617,7 @@ class ComputeLoss:
             target_indices = []
             for i in range(batch):
                 num = (targets[:, 0] == i).sum()  # find number of targets of each image
-                target_indices.append(torch.arange(num, device=device).float().view(1, num).repeat(n_anchors, 1) + 1)  # (na, num)
+                target_indices.append(torch.arange(num, device=device).float().view(1, num).repeat(n_anchors, 1) + 1)
             target_indices = torch.cat(target_indices, 1)  # (n_anchors, n_targets)
         else:
             target_indices = torch.arange(n_targets, device=device).float().view(1, n_targets).repeat(n_anchors, 1)
@@ -670,17 +670,13 @@ class ComputeLoss:
                 offsets = 0
 
             # Define
-            batch = t[:, 0].long()
-            cls = t[:, 1].long()  # class
-            # b, c = t[:, :2].long().T  # image, class
+            batch, cls = t[:, :2].long().T
             gxy = t[:, idx_xy]  # grid xy
             gwh = t[:, idx_wh]  # grid wh
             add_pts = t[:, idx_add]  # batch nr., class, x, y, w, h + (key/segment)points
             # kpts = t[:, 7:]  # batch nr., class, x, y, w, h + keypoints
-            idxa = t[:, idx_anchor].long()  # slice anchor indices
-            # bc, gxy, gwh, at = t.chunk(4, 1)  # (image, class), grid xy, grid wh, anchors
-            # a, tidx = kpts.long().T # anchors
-            idxt = t[:, idx_anchor + 1:].long().T
+            # slice anchor and target indices
+            idxa, idxt = t[:, idx_anchor: idx_anchor + 2].long().T
 
             gij = (gxy - offsets).long()
             gi, gj = gij.T  # grid xy indices

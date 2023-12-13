@@ -109,7 +109,7 @@ class IDetect(nn.Module):
     include_nms = False
     concat = False
 
-    def __init__(self, n_classes: int = 80, anchors=(), ch=()):  # detection layer
+    def __init__(self, n_classes: int = 80, anchors=(), channels: torch.Tensor = ()):  # detection layer
         super(IDetect, self).__init__()
         self.n_classes = n_classes  # number of classes
         self.n_out = n_classes + 5  # number of outputs per anchor
@@ -119,10 +119,10 @@ class IDetect(nn.Module):
         a = torch.tensor(anchors).float().view(self.n_layers, -1, 2)
         self.register_buffer('anchors', a)  # shape(nl,na,2)
         self.register_buffer('anchor_grid', a.clone().view(self.n_layers, 1, -1, 1, 1, 2))  # shape(nl,1,na,1,1,2)
-        self.m = nn.ModuleList(nn.Conv2d(x, self.n_out * self.n_anchors, 1) for x in ch)  # output conv
+        self.m = nn.ModuleList(nn.Conv2d(x, self.n_out * self.n_anchors, 1) for x in channels)  # output conv
         
-        self.ia = nn.ModuleList(ImplicitA(x) for x in ch)
-        self.im = nn.ModuleList(ImplicitM(self.n_out * self.n_anchors) for _ in ch)
+        self.ia = nn.ModuleList(ImplicitA(x) for x in channels)
+        self.im = nn.ModuleList(ImplicitM(self.n_out * self.n_anchors) for _ in channels)
 
     def forward(self, x):
         # x = x.copy()  # for profiling
@@ -130,7 +130,7 @@ class IDetect(nn.Module):
         self.training |= self.export
         for i in range(self.n_layers):
             x[i] = self.m[i](self.ia[i](x[i]))  # conv
-            x[i] = self.im[i](x[i])
+            # x[i] = self.im[i](x[i])  # FIXME: lines does not exist in segmentation code
             bs, _, ny, nx = x[i].shape  # x(bs,255,20,20) to x(bs,3,20,20,85)
             x[i] = x[i].view(bs, self.n_anchors, self.n_out, ny, nx).permute(0, 1, 3, 4, 2).contiguous()
 
@@ -326,9 +326,26 @@ class IKeypoint(nn.Module):
         return torch.stack((xv, yv), 2).view((1, 1, ny, nx, 2)).float()
 
 
+class Segment(Detect):
+    # YOLOv5 Segment head for segmentation models
+    def __init__(self, n_classes=80, anchors=(), n_masks=32, n_protos=256, ch=()):
+        super().__init__(n_classes, anchors, ch)
+        self.n_masks = n_masks  # number of masks
+        self.n_protos = n_protos  # number of protos
+        self.n_out = 5 + n_classes + self.n_masks  # number of outputs per anchor
+        self.m = nn.ModuleList(nn.Conv2d(x, self.n_out * self.n_anchors, 1) for x in ch)  # output conv
+        self.proto = Proto(ch[0], self.n_protos, self.n_masks)  # protos
+        self.detect = Detect.forward
+
+    def forward(self, x):
+        p = self.proto(x[0])
+        x = self.detect(self, x)
+        return (x, p) if self.training else (x[0], p) if self.export else (x[0], (x[1], p))
+
+
 class ISegment(IDetect):
     # YOLOR Segment head for segmentation models
-    def __init__(self, n_classes: int = 80, anchors=(), n_masks: int = 32, n_protos: int = 256, ch=()):
+    def __init__(self, n_classes: int = 80, anchors: tuple = (), n_masks: int = 32, n_protos: int = 256, ch=()):
         super().__init__(n_classes, anchors, ch)
         self.n_masks = n_masks  # number of masks
         self.n_protos = n_protos  # number of protos
@@ -336,6 +353,28 @@ class ISegment(IDetect):
         self.m = nn.ModuleList(nn.Conv2d(x, self.n_out * self.n_anchors, 1) for x in ch)  # output conv
         self.proto = Proto(ch[0], self.n_protos, self.n_masks)  # protos
         self.detect = IDetect.forward
+
+    def forward(self, x):
+        p = self.proto(x[0])
+        x = self.detect(self, x)
+        return (x, p) if self.training else (x[0], p) if self.export else (x[0], (x[1], p))
+
+
+class IRSegment(IDetect):
+    # YOLOR Segment head for segmentation models
+    def __init__(self, n_classes=80, anchors=(), n_masks=32, npr=256, ch=()):
+        super().__init__(n_classes, anchors, ch)
+        self.n_masks = n_masks  # number of masks
+        self.n_protos = npr  # number of protos
+        self.n_out = 5 + n_classes + self.n_masks  # number of outputs per anchor
+        self.m = nn.ModuleList(nn.Conv2d(x, self.n_out * self.n_anchors, 1) for x in ch[self.nl:])  # output conv
+        self.refine = Refine(ch[:self.n_layers], self.n_protos, self.n_masks)  # protos
+        self.detect = IDetect.forward
+
+    def forward(self, x):
+        p = self.refine(x[:self.nl])
+        x = self.detect(self, x[self.n_layers:])
+        return (x, p) if self.training else (x[0], p) if self.export else (x[0], (x[1], p))
 
 
 class MT(nn.Module):
@@ -630,7 +669,7 @@ class Model(nn.Module):
             anchors=None,
             nkpt: int = None
     ):  # model, input channels, number of classes
-        super(Model, self).__init__()
+        super().__init__()
         self.traced = False
         if isinstance(cfg, dict):
             self.yaml = cfg  # model dict
@@ -641,22 +680,10 @@ class Model(nn.Module):
             with open(cfg, "r") as fid:
                 self.yaml = yaml.load(fid, Loader=yaml.SafeLoader)  # model dict
 
-        # Define model
+        # Define model (assign to YAML config and as local variable)
         ch = self.yaml['ch'] = self.yaml.get('ch', ch)  # input channels
-
-        def overwrite_config_element(key: str, value) -> bool:
-            if value:
-                if key in self.yaml and value != self.yaml[key]:
-                   logger.info(f"Overriding {cfg} {key}={self.yaml[key]} with {key}={value}")
-                else:
-                    logger.info(f"Set {key} in {cfg} to {value}")
-
-                # override yaml value
-                self.yaml[key] = value
-            return True
-
-        overwrite_config_element('nc', nc)
-        overwrite_config_element('nkpt', nkpt)
+        nc = self.yaml['nc'] = self.yaml.get('nc', nc)
+        nkpt = self.yaml['nkpt'] = self.yaml.get('nkpt', nkpt)
 
         if anchors:
             logger.info(f'Overriding model.yaml anchors with anchors={anchors}')
@@ -668,18 +695,24 @@ class Model(nn.Module):
 
         # Build strides, anchors
         m = self.model[-1]  # Detect()
-        if isinstance(m, (Detect, IDetect, IAuxDetect, IBin, IKeypoint, MT)):
+        if isinstance(m, (Detect, IDetect, IAuxDetect, IBin, IKeypoint, MT, Segment, ISegment, IRSegment)):
             s = 256  # 2x min stride
             if isinstance(m, IAuxDetect):
-                m.stride = torch.tensor(
-                    [s / x.shape[-2] for x in self.forward(torch.zeros(1, ch, s, s))[:4]])  # forward
-            elif isinstance(m, MT):
-                temp = self.forward(torch.zeros(1, ch, s, s))
-                if isinstance(temp, list):
-                    temp = temp[0]
-                m.stride = torch.tensor([s / x.shape[-2] for x in temp["bbox_and_cls"]])  # forward
+                forward = lambda x: self.forward(x)[:4]
+                # m.stride = torch.tensor(
+                #     [s / x.shape[-2] for x in self.forward(torch.zeros(1, ch, s, s))[:4]])  # forward
+            # elif isinstance(m, MT):
+            #     temp = self.forward(torch.zeros(1, ch, s, s))
+            #     if isinstance(temp, list):
+            #         temp = temp[0]
+            #     m.stride = torch.tensor([s / x.shape[-2] for x in temp["bbox_and_cls"]])  # forward
+            elif isinstance(m, (Segment, ISegment, IRSegment)):
+                forward = lambda x: self.forward(x)[0]
+                # m.stride = torch.tensor([s / x.shape[-2] for x in self.forward(torch.zeros(1, ch, s, s))])[0]  # forward
             else:
-                m.stride = torch.tensor([s / x.shape[-2] for x in self.forward(torch.zeros(1, ch, s, s))])  # forward
+                forward = self.forward
+                # m.stride = torch.tensor([s / x.shape[-2] for x in self.forward(torch.zeros(1, ch, s, s))])  # forward
+            m.stride = torch.tensor([s / x.shape[-2] for x in forward(torch.zeros(1, ch, s, s))])  # forward
 
             check_anchor_order(m)
             m.anchors /= m.stride.view(-1, 1, 1)
@@ -691,16 +724,15 @@ class Model(nn.Module):
                 self._initialize_biases_bin()  # only run once
             elif isinstance(m, IKeypoint):
                 self._initialize_biases_kpt()  # only run once
-            else:  # Detect, IDetect, MT
+            else:  # Detect, IDetect, MT, Segments
                 self._initialize_biases()  # only run once
-            # print('Strides: %s' % m.stride.tolist())
 
         # Init weights, biases
         initialize_weights(self)
         self.info()
         logger.info('')
 
-    def forward(self, x, augment=False, profile=False):
+    def forward(self, x, augment: bool = False, profile: bool = False):
         if augment:
             img_size = x.shape[-2:]  # height, width
             s = [1, 0.83, 0.67]  # scales
@@ -730,7 +762,7 @@ class Model(nn.Module):
                 self.traced = False
 
             if self.traced:
-                if isinstance(m, Detect) or isinstance(m, IDetect) or isinstance(m, IAuxDetect) or isinstance(m, IKeypoint):
+                if isinstance(m, (Detect, IDetect, IAuxDetect, IKeypoint, ISegment)):
                     break
 
             if profile:
@@ -859,12 +891,12 @@ def parse_model(data_dict, ch):  # model_dict, input_channels(3)
     logger.info('\n%3s%18s%3s%10s  %-40s%-30s' % ('', 'from', 'n', 'params', 'module', 'arguments'))
     # do not rename variables due to eval() function!
     anchors = data_dict['anchors']
-    n_classes = data_dict['nc']  # number of classes
+    nc = data_dict['nc']  # number of classes
     gd = data_dict['depth_multiple']  # gain depth
     gw = data_dict['width_multiple']  # gain width
-    n_keypts = data_dict['nkpt'] if 'nkpt' in data_dict else 'nkpt'  # number of keypoints
+    nkpt = data_dict['nkpt'] if 'nkpt' in data_dict else 'nkpt'  # number of keypoints
     n_anchors = (len(anchors[0]) // 2) if isinstance(anchors, list) else anchors  # number of anchors
-    n_out = n_anchors * (n_classes + 5)  # number of outputs = anchors * (classes + 5)
+    n_out = n_anchors * (nc + 5)  # number of outputs = anchors * (classes + 5)
 
     layers, save, c2 = [], [], ch[-1]  # layers, savelist, ch out
     for i, (from_layer, n_filter, module, args) in enumerate(data_dict['backbone'] + data_dict['head']):  # from, number, module, args
@@ -914,7 +946,7 @@ def parse_model(data_dict, ch):  # model_dict, input_channels(3)
             c2 = ch[from_layer[0]]
         elif module is Foldcut:
             c2 = ch[from_layer] // 2
-        elif module in [Detect, IDetect, IAuxDetect, IBin, IKeypoint]:
+        elif module in [Detect, IDetect, IAuxDetect, IBin, IKeypoint, Segment, ISegment, IRSegment]:
             args.append([ch[x] for x in from_layer])
             if isinstance(args[1], int):  # number of anchors
                 args[1] = [list(range(args[1] * 2))] * len(from_layer)

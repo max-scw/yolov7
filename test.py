@@ -24,28 +24,27 @@ def test(data,
          imgsz=640,
          conf_thres=0.001,
          iou_thres=0.6,  # for NMS
-         save_json=False,
-         single_cls=False,
-         augment=False,
-         verbose=False,
+         save_json: bool = False,
+         single_cls: bool = False,
+         augment: bool = False,
+         verbose: bool = False,
          model=None,
          dataloader=None,
          save_dir=Path(''),  # for saving images
-         save_txt=False,  # for auto-labelling
-         save_hybrid=False,  # for hybrid auto-labelling
-         save_conf=False,  # save auto-label confidences
-         plots=True,
+         save_txt: bool = False,  # for auto-labelling
+         save_hybrid: bool = False,  # for hybrid auto-labelling
+         save_conf: bool = False,  # save auto-label confidences
+         plots: bool = True,
          wandb_logger=None,
          compute_loss=None,
-         half_precision=True,
-         trace=False,
-         is_coco=False,
-         v5_metric=False):
+         half_precision: bool = True,
+         trace: bool = False,
+         is_coco: bool = False,
+         v5_metric: bool = False):
     # Initialize/load model and set device
     training = model is not None
     if training:  # called by train.py
         device = next(model.parameters()).device  # get model device
-
     else:  # called directly
         set_logging()
         device = select_device(opt.device, batch_size=batch_size)
@@ -99,9 +98,9 @@ def test(data,
     coco91class = coco80_to_coco91_class()
     s = ('%20s' + '%12s' * 6) % ('Class', 'Images', 'Labels', 'P', 'R', 'mAP@.5', 'mAP@.5:.95')
     p, r, f1, mp, mr, map50, map, t0, t1 = 0., 0., 0., 0., 0., 0., 0., 0., 0.
-    loss = torch.zeros(3, device=device)
+    loss = torch.zeros(4, device=device)
     jdict, stats, ap, ap_class, wandb_images = [], [], [], [], []
-    for batch_i, (img, targets, paths, shapes) in enumerate(tqdm(dataloader, desc=s)):
+    for batch_i, (img, targets, paths, shapes, masks) in enumerate(tqdm(dataloader, desc=s)):
         img = img.to(device, non_blocking=True)
         img = img.half() if half else img.float()  # uint8 to fp16/32
         img /= 255.0  # 0 - 255 to 0.0 - 1.0
@@ -116,7 +115,8 @@ def test(data,
 
             # Compute loss
             if compute_loss:
-                loss += compute_loss([x.float() for x in train_out], targets)[1][:3]  # box, obj, cls
+                loss += compute_loss(train_out, targets, masks=masks)[1][:-1]  # box, obj, cls
+                # loss += compute_loss([x for x in train_out], targets, masks=masks)[1][:3]  # box, obj, cls  # FIXME: test with boxes
 
             # Run NMS (on xywh coordintate)
             targets[:, 2:6] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels
