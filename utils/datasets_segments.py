@@ -92,7 +92,7 @@ def create_dataloader(
         sampler=sampler,
         pin_memory=True,
         collate_fn=LoadImagesAndLabels.collate_fn4 if quad else LoadImagesAndLabelsWithMasks.collate_fn
-    ) # FIXME: LoadImagesAndLabelsWithMasks.collate_fn4
+    ) # TODO: LoadImagesAndLabelsWithMasks.collate_fn4
 
     return dataloader, dataset
 
@@ -220,7 +220,9 @@ class LoadImagesAndLabelsWithMasks(LoadImagesAndLabels):  # for training/testing
         img = img.transpose((2, 0, 1))[::-1]  # HWC to CHW, BGR to RGB
         img = np.ascontiguousarray(img)
 
-        return torch.from_numpy(img), labels_out, self.img_files[index], shapes, masks
+        path = self.img_files[index]
+
+        return torch.from_numpy(img), labels_out, path, shapes, masks
 
     def load_mosaic(self, index):
         # YOLOv5 4-mosaic loader. Loads 1 image + 3 random images into a 4-image mosaic
@@ -285,7 +287,10 @@ class LoadImagesAndLabelsWithMasks(LoadImagesAndLabels):  # for training/testing
     @staticmethod
     def collate_fn(batch):
         img, label, path, shapes, masks = zip(*batch)  # transposed
-        batched_masks = torch.cat(masks, 0)
+        if isinstance(masks, tuple) and all([isinstance(el, torch.Tensor) for el in masks]):
+            batched_masks = torch.cat(masks, 0)
+        else:
+            batched_masks = masks
         for i, l in enumerate(label):
             l[:, 0] = i  # add target image index for build_targets()
         return torch.stack(img, 0), torch.cat(label, 0), path, shapes, batched_masks
