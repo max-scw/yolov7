@@ -78,14 +78,14 @@ def train(hyp, opt, device, tb_writer=None):
     plots = not opt.evolve  # create plots
     cuda = device.type != 'cpu'
     init_seeds(2 + rank)
-    with open(opt.data) as fid:
+    with open(opt.data, "r", encoding="utf-8") as fid:
         data_dict = yaml.load(fid, Loader=yaml.SafeLoader)  # data dict
     is_coco = opt.data.endswith('coco.yaml')
 
     n_classes = 1 if opt.single_cls else int(data_dict['nc'])  # number of classes
     n_keypoints = int(data_dict['nkpt']) if 'nkpt' in data_dict else None
     names = ['item'] if opt.single_cls and len(data_dict['names']) != 1 else data_dict['names']  # class names
-    assert len(names) == n_classes, '%g names found for nc=%g dataset in %s' % (len(names), n_classes, opt.data)  # check
+    assert len(names) == n_classes, f"{len(names)} names found for nc={n_classes} classes in dataset '{opt.data}'"
 
     # Model
     pretrained = weights.endswith('.pt')
@@ -282,7 +282,9 @@ def train(hyp, opt, device, tb_writer=None):
         global_augmentation_probability=opt.augmentation_probability,
         mosaic_augmentation=not opt.no_mosaic_augmentation,
         n_keypoints=n_keypoints,
-        predict_masks=opt.masks
+        predict_masks=opt.masks,
+        # mask_downsample_ratio,
+        # shuffle
     )
     mlc = np.concatenate(dataset.labels, 0)[:, 0].max()  # max label class
     n_batches = len(dataloader)  # number of batches
@@ -302,6 +304,7 @@ def train(hyp, opt, device, tb_writer=None):
             prefix=colorstr('val: '),
             augment=False,
             n_keypoints=n_keypoints,
+            predict_masks=opt.masks
         )[0]
 
         if not opt.resume:
@@ -382,7 +385,7 @@ def train(hyp, opt, device, tb_writer=None):
         if rank != -1:
             dataloader.sampler.set_epoch(epoch)
         pbar = enumerate(dataloader)
-        logger.info(('\n' + '%10s' * 9) % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls', 'kpt', 'total', 'labels', 'img_size'))
+        logger.info(('\n' + '%10s' * 9) % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls', 'add', 'total', 'labels', 'img_size'))
         if rank in [-1, 0]:
             pbar = tqdm(pbar, total=n_batches)  # progress bar
         optimizer.zero_grad()
@@ -396,7 +399,13 @@ def train(hyp, opt, device, tb_writer=None):
                                     f"{path_to_export.as_posix()}")
                 p2fl = path_to_export / f"{opt.name}_e{epoch}_b{i}.jpg"
                 print_debug_msg(f"{p2fl.as_posix()}: {imgs.shape}")
-                plot_images(imgs, targets, fname=p2fl.as_posix(), max_subplots=opt.batch_size, aspect_ratio=16/9)
+                plot_images(
+                    imgs,
+                    targets,
+                    fname=p2fl.as_posix(),
+                    max_subplots=opt.batch_size,
+                    aspect_ratio=16/9
+                )
 
             ni = i + n_batches * epoch  # number integrated batches (since train start)
             imgs = imgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
@@ -424,17 +433,19 @@ def train(hyp, opt, device, tb_writer=None):
             with amp.autocast(enabled=cuda):
                 pred = model(imgs)  # forward
 
-                if isinstance(pred, dict):  # maks is not None
-                    pred_ = pred["bbox_and_cls"]
-                    masks = masks.to(device).float()
-                else:
-                    pred_ = pred
-
                 if 'loss_ota' not in hyp or hyp['loss_ota'] == 1:
                     # loss, loss_items = compute_loss_ota(pred, targets.to(device), imgs)  # loss scaled by batch_size
-                    loss, loss_items = compute_loss(pred_, targets.to(device), masks=masks)
+                    loss, loss_items = compute_loss(
+                        pred,
+                        targets.to(device),
+                        masks=masks.to(device) if isinstance(masks, torch.Tensor) else masks
+                    )
                 else:
-                    loss, loss_items = compute_loss(pred_, targets.to(device), masks=masks)  # loss scaled by batch_size
+                    loss, loss_items = compute_loss(
+                        pred,
+                        targets.to(device),
+                        masks=masks.to(device) if isinstance(masks, torch.Tensor) else masks
+                    )  # loss scaled by batch_size
 
                 if rank != -1:
                     loss *= opt.world_size  # gradient averaged between devices in DDP mode
@@ -456,9 +467,9 @@ def train(hyp, opt, device, tb_writer=None):
             if rank in [-1, 0]:
                 mloss = (mloss * i + loss_items) / (i + 1)  # update mean losses
                 mem = '%.3gG' % (torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0)  # (GB)
-                s = ('%10s' * 2 + '%10.4g' * 7) % (
+                info_str = ('%10s' * 2 + '%10.4g' * 7) % (
                     '%g/%g' % (epoch, epochs - 1), mem, *mloss, targets.shape[0], imgs.shape[-1])
-                pbar.set_description(s)
+                pbar.set_description(info_str)
 
                 # Plot
                 if plots and ni < 10:
@@ -495,13 +506,13 @@ def train(hyp, opt, device, tb_writer=None):
                 )
 
             # Write
-            with open(results_file, 'a') as f:
-                f.write(s + '%10.4g' * 7 % results + '\n')  # append metrics, val_loss  # TODO: 8
+            with open(results_file, 'a') as fid:
+                fid.write(info_str + '%10.4g' * len(results) % results + '\n')  # append metrics, val_loss
             if len(opt.name) and opt.bucket:
                 os.system('gsutil cp %s gs://%s/results/results%s.txt' % (results_file, opt.bucket, opt.name))
 
             # Log
-            tags = ['train/box_loss', 'train/obj_loss', 'train/cls_loss', 'train/kpt_loss', # train loss  # TODO train/msk_loss
+            tags = ['train/box_loss', 'train/obj_loss', 'train/cls_loss', 'train/add_loss', # train loss  # TODO train/msk_loss
                     'metrics/precision', 'metrics/recall', 'metrics/mAP_0.5', 'metrics/mAP_0.5:0.95',
                     'val/box_loss', 'val/obj_loss', 'val/cls_loss',  # val loss
                     'x/lr0', 'x/lr1', 'x/lr2']  # params
@@ -647,36 +658,6 @@ if __name__ == '__main__':
 
     opt = parser.parse_args()
 
-
-    # DEFAULT
-    opt.weights = "trained_models/yolov7-tiny.pt"
-    opt.name = "Test"
-    opt.device = "cpu"
-    opt.batch_size = 4
-    opt.epochs = 2
-    opt.albumentations_probability = 0.1
-    opt.noautoanchor = True
-
-    # BBOXES
-    opt.cfg = "cfg/training/yolov7-tiny-template.yaml"
-    opt.data = "data/CRURotorAssembly.yaml"
-    opt.augmentation_config = "data/augmentation-CRU.yaml"
-
-    # # MASK
-    opt.cfg = "cfg/training/yolov7-mask.yaml"
-    opt.data = "data/MetaLearnTest_Seg.yaml"
-    opt.weights = "trained_models/yolov7-mask.pt"
-    opt.masks = True
-    opt.no_mosaic_augmentation = True  # FIXME: mosaic augmentation not working for segments
-    opt.no_augmentation = True  # FIXME: scaling for albumentations
-
-    # # KEYPOINTS
-    # # TODO: keypoint anchors: uniform distribution np.random.random((n_anchors, 2))
-    # # TODO: augmentation: "manual" transformation/mirroring
-    # opt.cfg = "cfg/training/yolov7-tiny-kpt.yaml"
-    # opt.data = "data/keypoints.custom.yaml"
-    # opt.augmentation_config = "data/augmentation-yolov7.yaml"
-    # opt.no_augmentation = True
 
 
 

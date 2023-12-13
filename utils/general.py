@@ -666,16 +666,26 @@ def box_diou(box1, box2, eps: float = 1e-7):
     return iou - (centers_distance_squared / diagonal_distance_squared)
 
 
-def non_max_suppression(prediction, conf_thres=0.25, iou_thres=0.45, classes=None, agnostic=False, multi_label=False,
-                        labels=()):
+def non_max_suppression(
+        prediction,
+        conf_thres: float = 0.25,
+        iou_thres: float = 0.45,
+        classes: bool = None,
+        agnostic: bool = False,
+        multi_label: bool = False,
+        labels=(),
+        n_classes: int = 0
+):
     """Runs Non-Maximum Suppression (NMS) on inference results
 
     Returns:
          list of detections, on (n,6) tensor per image [xyxy, conf, cls]
     """
 
-    nc = prediction.shape[2] - 5  # number of classes
+    nc = n_classes if n_classes > 0 else prediction.shape[2] - 5  # number of classes
     xc = prediction[..., 4] > conf_thres  # candidates
+
+    idx_mask_start = 5 + nc  # mask start index
 
     # Settings
     min_wh, max_wh = 2, 4096  # (pixels) minimum and maximum box width and height
@@ -695,11 +705,11 @@ def non_max_suppression(prediction, conf_thres=0.25, iou_thres=0.45, classes=Non
 
         # Cat apriori labels if autolabelling
         if labels and len(labels[xi]):
-            l = labels[xi]
-            v = torch.zeros((len(l), nc + 5), device=x.device)
-            v[:, :4] = l[:, 1:5]  # box
+            lbl = labels[xi]
+            v = torch.zeros((len(lbl), nc + 5), device=x.device)
+            v[:, :4] = lbl[:, 1:5]  # box
             v[:, 4] = 1.0  # conf
-            v[range(len(l)), l[:, 0].long() + 5] = 1.0  # cls
+            v[range(len(lbl)), lbl[:, 0].long() + 5] = 1.0  # cls
             x = torch.cat((x, v), 0)
 
         # If none remain process next image
@@ -708,21 +718,23 @@ def non_max_suppression(prediction, conf_thres=0.25, iou_thres=0.45, classes=Non
 
         # Compute conf
         if nc == 1:
-            x[:, 5:] = x[:, 4:5] # for models with one class, cls_loss is 0 and cls_conf is always 0.5,
-                                 # so there is no need to multiplicate.
+            # for models with one class, cls_loss is 0 and cls_conf is always 0.5,
+            # so there is no need to multiply.
+            x[:, 5:] = x[:, 4:5]
         else:
             x[:, 5:] *= x[:, 4:5]  # conf = obj_conf * cls_conf
 
         # Box (center x, center y, width, height) to (x1, y1, x2, y2)
         box = xywh2xyxy(x[:, :4])
+        mask = x[:, idx_mask_start:]  # zero columns if no masks
 
         # Detections matrix nx6 (xyxy, conf, cls)
         if multi_label:
-            i, j = (x[:, 5:] > conf_thres).nonzero(as_tuple=False).T
-            x = torch.cat((box[i], x[i, j + 5, None], j[:, None].float()), 1)
+            i, j = (x[:, 5:idx_mask_start] > conf_thres).nonzero(as_tuple=False).T
+            x = torch.cat((box[i], x[i, j + 5, None], j[:, None].float(), mask[i]), 1)
         else:  # best class only
-            conf, j = x[:, 5:].max(1, keepdim=True)
-            x = torch.cat((box, conf, j.float()), 1)[conf.view(-1) > conf_thres]
+            conf, j = x[:, 5:idx_mask_start].max(1, keepdim=True)
+            x = torch.cat((box, conf, j.float(), mask), 1)[conf.view(-1) > conf_thres]
 
         # Filter by class
         if classes is not None:
@@ -733,10 +745,10 @@ def non_max_suppression(prediction, conf_thres=0.25, iou_thres=0.45, classes=Non
         #     x = x[torch.isfinite(x).all(1)]
 
         # Check shape
-        n = x.shape[0]  # number of boxes
-        if not n:  # no boxes
+        n_boxes = x.shape[0]  # number of boxes
+        if not n_boxes:  # no boxes
             continue
-        elif n > max_nms:  # excess boxes
+        elif n_boxes > max_nms:  # excess boxes
             x = x[x[:, 4].argsort(descending=True)[:max_nms]]  # sort by confidence
 
         # Batched NMS
@@ -745,7 +757,7 @@ def non_max_suppression(prediction, conf_thres=0.25, iou_thres=0.45, classes=Non
         i = torchvision.ops.nms(boxes, scores, iou_thres)  # NMS
         if i.shape[0] > max_det:  # limit detections
             i = i[:max_det]
-        if merge and (1 < n < 3E3):  # Merge NMS (boxes merged using weighted mean)
+        if merge and (1 < n_boxes < 3E3):  # Merge NMS (boxes merged using weighted mean)
             # update boxes as boxes(i,4) = weights(i,n) * boxes(n,4)
             iou = box_iou(boxes[i], boxes) > iou_thres  # iou matrix
             weights = iou * scores[None]  # box weights
@@ -758,7 +770,7 @@ def non_max_suppression(prediction, conf_thres=0.25, iou_thres=0.45, classes=Non
             print(f'WARNING: NMS time limit {time_limit}s exceeded')
             break  # time limit exceeded
 
-    return output
+    return output  # [n_images x [box, conf, class_id, mask]]
 
 
 def non_max_suppression_kpt(prediction, conf_thres=0.25, iou_thres=0.45, classes=None, agnostic=False, multi_label=False,
@@ -790,11 +802,11 @@ def non_max_suppression_kpt(prediction, conf_thres=0.25, iou_thres=0.45, classes
 
         # Cat apriori labels if autolabelling
         if labels and len(labels[xi]):
-            l = labels[xi]
-            v = torch.zeros((len(l), nc + 5), device=x.device)
-            v[:, :4] = l[:, 1:5]  # box
+            lbl = labels[xi]
+            v = torch.zeros((len(lbl), nc + 5), device=x.device)
+            v[:, :4] = lbl[:, 1:5]  # box
             v[:, 4] = 1.0  # conf
-            v[range(len(l)), l[:, 0].long() + 5] = 1.0  # cls
+            v[range(len(lbl)), lbl[:, 0].long() + 5] = 1.0  # cls
             x = torch.cat((x, v), 0)
 
         # If none remain process next image

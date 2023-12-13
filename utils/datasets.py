@@ -131,7 +131,7 @@ def create_dataloader(
         num_workers=n_workers,
         sampler=sampler,
         pin_memory=True,
-        collate_fn=LoadImagesAndLabels.collate_fn4 if quad else LoadImagesAndLabelsWithMasks.collate_fn
+        collate_fn=LoadImagesAndLabels.collate_fn4 if quad else LoadImagesAndLabels.collate_fn
     ) # FIXME: LoadImagesAndLabelsWithMasks.collate_fn4
 
     return dataloader, dataset

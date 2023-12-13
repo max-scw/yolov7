@@ -105,7 +105,7 @@ def test(data,
         img = img.half() if half else img.float()  # uint8 to fp16/32
         img /= 255.0  # 0 - 255 to 0.0 - 1.0
         targets = targets.to(device)
-        nb, _, height, width = img.shape  # batch size, channels, height, width
+        batch_size, _, height, width = img.shape  # batch size, channels, height, width
 
         with torch.no_grad():
             # Run model
@@ -120,9 +120,9 @@ def test(data,
 
             # Run NMS (on xywh coordintate)
             targets[:, 2:6] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels
-            lb = [targets[targets[:, 0] == i, 1:] for i in range(nb)] if save_hybrid else []  # for autolabelling
+            lb = [targets[targets[:, 0] == i, 1:] for i in range(batch_size)] if save_hybrid else []  # for autolabelling
             t = time_synchronized()
-            out = non_max_suppression(out, conf_thres=conf_thres, iou_thres=iou_thres, labels=lb, multi_label=True)
+            out = non_max_suppression(out, conf_thres=conf_thres, iou_thres=iou_thres, labels=lb, multi_label=True, n_classes=model.nc)
             t1 += time_synchronized() - t
 
         # Statistics per image
@@ -213,10 +213,10 @@ def test(data,
 
         # Plot images
         if plots and batch_i < 3:
-            f = save_dir / f'test_batch{batch_i}_labels.jpg'  # labels
-            Thread(target=plot_images, args=(img, targets, paths, f, names), daemon=True).start()
-            f = save_dir / f'test_batch{batch_i}_pred.jpg'  # predictions
-            Thread(target=plot_images, args=(img, output_to_target(out), paths, f, names), daemon=True).start()
+            file = save_dir / f'test_batch{batch_i}_labels.jpg'  # labels
+            Thread(target=plot_images, args=(img, targets, paths, file, names), daemon=True).start()
+            file = save_dir / f'test_batch{batch_i}_pred.jpg'  # predictions
+            Thread(target=plot_images, args=(img, output_to_target(out), paths, file, names), daemon=True).start()
 
     # Compute statistics
     stats = [np.concatenate(x, 0) for x in zip(*stats)]  # to numpy
