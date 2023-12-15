@@ -31,7 +31,7 @@ def create_dataloader(
         batch_size,
         stride,
         opt,
-        hyp=None,
+        hyp: dict = None,
         augment: bool = False,
         cache: bool = False,
         pad: float = 0.0,
@@ -48,7 +48,7 @@ def create_dataloader(
         n_keypoints: int = None,
         predict_masks: bool = False,
         downsample_ratio=1,
-        overlap=False
+        overlap: bool = False
 ):
     # Make sure only the first process in DDP process the dataset first, and the following others can use the cache
     with torch_distributed_zero_first(rank):
@@ -73,12 +73,13 @@ def create_dataloader(
         }
 
         if predict_masks:
+            kwargs["annotation_type"] = "segment"
             kwargs["downsample_ratio"] = downsample_ratio
             kwargs["overlap"] = overlap
             dataset = LoadImagesAndLabelsWithMasks(**kwargs)
         else:
+            kwargs["annotation_type"] = "keypoint" if n_keypoints > 0 else "bbox"
             dataset = LoadImagesAndLabels(**kwargs)
-            # FIXME: return None as mask!
 
     batch_size = min(batch_size, len(dataset))
     n_workers = min([os.cpu_count() // world_size, batch_size if batch_size > 1 else 0, workers])  # number of workers
@@ -92,7 +93,7 @@ def create_dataloader(
         sampler=sampler,
         pin_memory=True,
         collate_fn=LoadImagesAndLabels.collate_fn4 if quad else LoadImagesAndLabelsWithMasks.collate_fn
-    ) # TODO: LoadImagesAndLabelsWithMasks.collate_fn4
+    )  # TODO: LoadImagesAndLabelsWithMasks.collate_fn4
 
     return dataloader, dataset
 
@@ -112,16 +113,18 @@ class LoadImagesAndLabelsWithMasks(LoadImagesAndLabels):  # for training/testing
 
         hyp = self.hyp
         mosaic = self.mosaic and random.random() < hyp['mosaic']
-        masks = []
+
+        masks = None
+        is_rel_coords = True
         if mosaic:
             # Load mosaic
             img, labels, segments = self.load_mosaic(index)
             shapes = None
+            # TODO: integrate masks
 
             # MixUp augmentation
             if random.random() < hyp["mixup"]:
                 img, labels, segments = segaug.mixup(img, labels, segments, *self.load_mosaic(random.randint(0, self.n - 1)))
-
         else:
             # Load image
             img, (h0, w0), (h, w) = load_image(self, index)
@@ -136,6 +139,7 @@ class LoadImagesAndLabelsWithMasks(LoadImagesAndLabels):  # for training/testing
             # [array, array, ....], array.shape=(num_points, 2), xyxyxyxy
             segments = self.segments[index].copy()
             if len(segments):
+                # normalized segment points to absolute pixels
                 for i_s in range(len(segments)):
                     segments[i_s] = xyn2xy(
                         segments[i_s],
@@ -146,23 +150,24 @@ class LoadImagesAndLabelsWithMasks(LoadImagesAndLabels):  # for training/testing
                     )
             if labels.size:  # normalized xywh to pixel xyxy format
                 labels[:, 1:] = xywhn2xyxy(labels[:, 1:], ratio[0] * w, ratio[1] * h, padw=pad[0], padh=pad[1])
+                is_rel_coords = False
 
-            if self.augment:
-                img, labels, segments = segaug.random_perspective(
-                    img,
-                    targets=labels,
-                    segments=segments,
-                    degrees=hyp["degrees"],
-                    translate=hyp["translate"],
-                    scale=hyp["scale"],
-                    shear=hyp["shear"],
-                    perspective=hyp["perspective"],
-                    # return_seg=True,
-                )
+        if self.augment:
+            img, labels, segments = segaug.random_perspective(
+                img,
+                targets=labels,
+                segments=segments,
+                degrees=hyp["degrees"],
+                translate=hyp["translate"],
+                scale=hyp["scale"],
+                shear=hyp["shear"],
+                perspective=hyp["perspective"],
+                # return_seg=True,
+            )
 
         n_labels = len(labels)  # number of labels
         if n_labels:
-            labels[:, 1:5] = xyxy2xywhn(labels[:, 1:5], w=img.shape[1], h=img.shape[0], clip=True, eps=1e-3)
+            # labels[:, 1:5] = xyxy2xywhn(labels[:, 1:5], w=img.shape[1], h=img.shape[0], clip=True, eps=1e-3)
             if self.overlap:
                 masks, sorted_idx = polygons2masks_overlap(
                     img.shape[:2],
@@ -178,23 +183,34 @@ class LoadImagesAndLabelsWithMasks(LoadImagesAndLabels):  # for training/testing
                     color=1,
                     downsample_ratio=self.downsample_ratio
                 )
+
         if len(masks):
-            masks = torch.from_numpy(masks)
+            # albumentations requires numpy.ndarray anyway
+            pass
         else:
-            masks = torch.zeros(1 if self.overlap else n_labels,
-                                img.shape[0] // self.downsample_ratio,
-                                img.shape[1] // self.downsample_ratio
-                                )
-        # TODO: albumentations support
+            masks = np.zeros(
+                shape=(
+                    1 if self.overlap else n_labels,
+                    img.shape[0] // self.downsample_ratio,
+                    img.shape[1] // self.downsample_ratio
+                ), dtype=np.uint8
+            )
+
         if self.augment:
-            # Albumentations
-            # there are some augmentation that won't change boxes and masks,
-            # so just be it for now.
-            img, labels = self.albumentations(img, labels)
-            n_labels = len(labels)  # update after albumentations
+            if self.albumentations is not None:
+                # Albumentations
+                # there are some augmentation that won't change boxes and masks,
+                # so just be it for now.
+                img, labels, masks = self.albumentations(img, labels, masks)
+                n_labels = len(labels)  # update after albumentations
+
+            # to torch.Tensor
+            masks = torch.from_numpy(masks)
 
             # HSV color-space
             augment_hsv(img, hgain=hyp["hsv_h"], sgain=hyp["hsv_s"], vgain=hyp["hsv_v"])
+
+            # TODO: add paste_in augmentation
 
             # Flip up-down
             if random.random() < hyp["flipud"]:
@@ -211,6 +227,10 @@ class LoadImagesAndLabelsWithMasks(LoadImagesAndLabels):  # for training/testing
                     masks = torch.flip(masks, dims=[2])
 
             # Cutouts  # labels = cutout(img, labels, p=0.5)
+
+        if not is_rel_coords and n_labels:
+            labels = self.transform_to_relative_coordinates(labels, w=img.shape[0], h=img.shape[1])
+            is_rel_coords = True
 
         labels_out = torch.zeros((n_labels, 6))
         if n_labels:
@@ -289,10 +309,13 @@ class LoadImagesAndLabelsWithMasks(LoadImagesAndLabels):  # for training/testing
         img, label, path, shapes, masks = zip(*batch)  # transposed
         if isinstance(masks, tuple) and all([isinstance(el, torch.Tensor) for el in masks]):
             batched_masks = torch.cat(masks, 0)
+        elif isinstance(masks, tuple) and all([isinstance(el, np.ndarray) for el in masks]):
+            batched_masks = torch.from_numpy(np.concatenate(masks))
         else:
             batched_masks = masks
-        for i, l in enumerate(label):
-            l[:, 0] = i  # add target image index for build_targets()
+
+        for i, lbl in enumerate(label):
+            lbl[:, 0] = i  # add target image index for build_targets()
         return torch.stack(img, 0), torch.cat(label, 0), path, shapes, batched_masks
 
 

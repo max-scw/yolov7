@@ -22,7 +22,6 @@ from tqdm import tqdm
 from utils.general import (
     check_requirements,
     xyxy2xywh,
-    # xyxy2xywhn,  # TODO: why is normalization needed anyway?
     xywh2xyxy,
     xywhn2xyxy,
     xyn2xy,
@@ -413,7 +412,8 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
             augmentation_config: Union[str, Path] = None,
             augmentation_probability: float = None,
             mosaic_augmentation: bool = True,
-            n_keypoints: int = None
+            n_keypoints: int = None,
+            annotation_type: str = "bbox"
             ):
         self.img_size = img_size
         self.augment = augment
@@ -432,8 +432,8 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
             self.albumentations = Albumentations(
                 config_file=augmentation_config,
                 p=augmentation_probability,
-                annotation_type="kpt" if self.n_kpt else "bbox" # TODO: fix for bbox + kpt!
-                )
+                annotation_type=annotation_type
+            )
         else:
             self.albumentations = None
 
@@ -656,6 +656,8 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
 
         hyp = self.hyp
         mosaic = self.mosaic and random.random() < hyp['mosaic']
+
+        masks = None
         if mosaic:
             # Load mosaic
             if random.random() < 0.8:
@@ -663,6 +665,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
             else:
                 img, labels = load_mosaic9(self, index)
             shapes = None
+
 
             # MixUp https://arxiv.org/pdf/1710.09412.pdf
             if random.random() < hyp['mixup']:
@@ -673,7 +676,6 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                 r = np.random.beta(8.0, 8.0)  # mixup ratio, alpha=beta=8.0
                 img = (img * r + img2 * (1 - r)).astype(np.uint8)
                 labels = np.concatenate((labels, labels2), 0)
-
         else:
             # Load image
             img, (h0, w0), (h, w) = load_image(self, index)
@@ -697,7 +699,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                                                  shear=hyp['shear'],
                                                  perspective=hyp['perspective'])
             if self.albumentations is not None:
-                img, labels = self.albumentations(img, labels)
+                img, labels, masks = self.albumentations(img, labels, masks)
 
             # Augment colorspace
             augment_hsv(img, hgain=hyp['hsv_h'], sgain=hyp['hsv_s'], vgain=hyp['hsv_v'])
@@ -746,7 +748,9 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         img = img[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3x416x416
         img = np.ascontiguousarray(img)
 
-        return torch.from_numpy(img), labels_out, self.img_files[index], shapes, None
+        path = self.img_files[index]
+
+        return torch.from_numpy(img), labels_out, path, shapes, masks
 
     @staticmethod
     def collate_fn(batch):
@@ -1430,9 +1434,6 @@ def pastein(image, labels, sample_labels, sample_images, sample_masks):
 
 class Albumentations:
     # (optional, only used if package is installed)
-    TYPE_BBOX = ["bbox", "boundingbox", "bounding box", "box"]
-    TYPE_KEYPONIT = ["kpt", "kypt", "keypoint"]
-
     def __init__(
             self,
             config_file: Union[str, Path],
@@ -1446,30 +1447,47 @@ class Albumentations:
         trafo_fncs = build_augmentation_pipeline(config_file, probability=p, verbose=verbose)
 
         # TODO: augment bounding boxes + image with albumentations and transform corresponding keypoints manually afterwards
-        if annotation_type.lower() in self.TYPE_BBOX:
-            args = {"bbox_params": A.BboxParams(format='pascal_voc', label_fields=['class_labels'])} # this is xyxy coordinates
-        elif annotation_type.lower() in self.TYPE_KEYPONIT:
+        if annotation_type in ["bbox", "segment"]:
+            # yolo: normalized [x0, y0, w, h]
+            # pascal_voc: [x_min, y_min, x_max, y_max]
+            args = {"bbox_params": A.BboxParams(format="pascal_voc", label_fields=["class_labels"])} # this is xyxy coordinates
+        elif annotation_type == "keypoint":
             args = {"keypoint_params": A.KeypointParams(format='xy', label_fields=['class_labels'], remove_invisible=False)}
         else:
             raise ValueError(f"Unknown annotation format: {annotation_type}. "
-                             f"Valid formats are {self.TYPE_BBOX} for bounding boxes "
-                             f"or {self.TYPE_KEYPONIT} for keypoints")
+                             f"Valid formats are 'bbox' for bounding boxe, 'keypoint' for keypoints, or"
+                             f"'segment' for polygons for segmentation.")
         self.transform = A.Compose(trafo_fncs, **args)
+        self.annotation_type = annotation_type
 
         logging.info(colorstr('albumentations: ') + ', '.join(f'{x}' for x in self.transform.transforms if x.p))
 
-    def __call__(self, im: np. ndarray, labels: np. ndarray, p: float = 1.0):
+    def __call__(
+            self,
+            imgs: np. ndarray,
+            labels: np. ndarray,
+            masks: np.ndarray = None,
+            p: float = 1.0
+    ):
         if self.transform and random.random() < p:
-            new = self.transform(image=im, bboxes=labels[:, 1:], class_labels=labels[:, 0])  # transformed
-            im, labels = new['image'], np.array([[c, *b] for c, b in zip(new['class_labels'], new['bboxes'])])
-        return im, labels
+            new = self.transform(
+                image=imgs,
+                bboxes=labels[:, 1:5],
+                class_labels=labels[:, 0],
+                masks=[el.astype(np.uint8) for el in masks] if isinstance(masks, np.ndarray) and len(masks.shape) > 2 else masks
+            )  # transformed
+            # TODO: add keypoints
+            imgs = new["image"]
+            labels = np.array([[c, *b] for c, b in zip(new["class_labels"], new["bboxes"])])
+            masks = np.stack(new["masks"]) if isinstance(new["masks"], list) else new["masks"]
+        return imgs, labels, masks
 
 
-def create_folder(path='./new'):
+def create_folder(path: Union[str, Path] = './new'):
     # Create folder
-    if os.path.exists(path):
+    if Path(path).exists():
         shutil.rmtree(path)  # delete output folder
-    os.makedirs(path)  # make new output folder
+    Path(path).mkdir()  # make new output folder
 
 
 def flatten_recursive(path='../coco'):

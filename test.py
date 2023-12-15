@@ -10,7 +10,8 @@ import yaml
 from tqdm import tqdm
 
 from models.experimental import attempt_load
-from utils.datasets import create_dataloader
+# from utils.datasets import create_dataloader
+from utils.datasets_segments import create_dataloader
 from utils.general import coco80_to_coco91_class, check_dataset, check_file, check_img_size, check_requirements, \
     box_iou, non_max_suppression, scale_coords, xyxy2xywh, xywh2xyxy, set_logging, increment_path, colorstr
 from utils.metrics import ap_per_class, ConfusionMatrix
@@ -28,6 +29,7 @@ def test(data,
          single_cls: bool = False,
          augment: bool = False,
          verbose: bool = False,
+         opt: dict = None, # TODO: add
          model=None,
          dataloader=None,
          save_dir=Path(''),  # for saving images
@@ -86,8 +88,12 @@ def test(data,
         if device.type != 'cpu':
             model(torch.zeros(1, 3, imgsz, imgsz).to(device).type_as(next(model.parameters())))  # run once
         task = opt.task if opt.task in ('train', 'val', 'test') else 'val'  # path to train/val/test images
-        dataloader = create_dataloader(data[task], imgsz, batch_size, gs, opt, pad=0.5, rect=True,
-                                       prefix=colorstr(f'{task}: '))[0]
+        dataloader = create_dataloader(
+            data[task], imgsz, batch_size, gs, opt,
+            pad=0.5,
+            rect=True,
+            prefix=colorstr(f'{task}: ')
+        )[0]
 
     if v5_metric:
         print("Testing with YOLOv5 AP metric...")
@@ -326,6 +332,7 @@ if __name__ == '__main__':
              opt.single_cls,
              opt.augment,
              opt.verbose,
+             opt = opt,
              save_txt=opt.save_txt | opt.save_hybrid,
              save_hybrid=opt.save_hybrid,
              save_conf=opt.save_conf,
