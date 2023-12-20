@@ -468,7 +468,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
             cache_path = Path(self.label_files[0]).parent
         cache_path = cache_path.with_suffix('.cache')
 
-        cache_exists = cache_path.is_file()
+        cache_exists = cache_path.is_file() and cache_images
         if cache_exists:
             cache = torch.load(cache_path)  # load
             # check if cache was changed
@@ -476,6 +476,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
             if cache['hash'] != hash_of_files:
                 # files were changed
                 cache_exists = False
+
         if not cache_exists:
             cache = self.cache_labels(cache_path, prefix)  # cache
 
@@ -517,6 +518,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
             self.label_files = [self.label_files[i] for i in irect]
             self.labels = [self.labels[i] for i in irect]
             self.shapes = s[irect]  # wh
+            self.segments = [self.segments[i] for i in irect]
             ar = ar[irect]
 
             # Set training image shapes
@@ -552,6 +554,10 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                     gb += self.imgs[i].nbytes
                 pbar.desc = f'{prefix}Caching images ({gb / 1E9:.1f}GB)'
             pbar.close()
+
+        ## DEBUGGING
+        assert len(self.segments) == len(self.labels)
+        assert all([len(seg) == lbl.shape[0] for seg, lbl in zip(self.segments, self.labels)])
 
     def cache_labels(self, path_to_cache: Union[str, Path] = './labels.cache', prefix: str = '') -> Dict[str, Any]:
         # ensure pathlib object
@@ -629,6 +635,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                     # if path is not a file (to labels)
                     n_missing += 1  # label missing
                     lines = np.zeros((0, self.sz_label), dtype=np.float32)
+
                 cache[im_file] = [lines, shape, segments]
             except Exception as e:
                 n_corrupted += 1
@@ -1479,7 +1486,13 @@ class Albumentations:
             # TODO: add keypoints
             imgs = new["image"]
             labels = np.array([[c, *b] for c, b in zip(new["class_labels"], new["bboxes"])])
-            masks = np.stack(new["masks"]) if isinstance(new["masks"], list) else new["masks"]
+            if isinstance(new["masks"], list):
+                if len(new["masks"]) > 1:
+                    masks = np.stack(new["masks"])
+                else:
+                    masks = np.array(new["masks"])
+            else:
+                masks = new["masks"]
         return imgs, labels, masks
 
 

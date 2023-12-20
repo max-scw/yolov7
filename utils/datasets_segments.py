@@ -162,7 +162,6 @@ class LoadImagesAndLabelsWithMasks(LoadImagesAndLabels):  # for training/testing
                 scale=hyp["scale"],
                 shear=hyp["shear"],
                 perspective=hyp["perspective"],
-                # return_seg=True,
             )
 
         n_labels = len(labels)  # number of labels
@@ -184,7 +183,7 @@ class LoadImagesAndLabelsWithMasks(LoadImagesAndLabels):  # for training/testing
                     downsample_ratio=self.downsample_ratio
                 )
 
-        if len(masks):
+        if masks is not None and len(masks) > 0:
             # albumentations requires numpy.ndarray anyway
             pass
         else:
@@ -195,6 +194,7 @@ class LoadImagesAndLabelsWithMasks(LoadImagesAndLabels):  # for training/testing
                     img.shape[1] // self.downsample_ratio
                 ), dtype=np.uint8
             )
+            print(f"DEBUG: no masks. Create black mask: masks.shape={masks.shape}, labels.shape={labels.shape}")
 
         if self.augment:
             if self.albumentations is not None:
