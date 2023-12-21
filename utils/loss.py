@@ -532,6 +532,7 @@ class ComputeLoss:
                             mask_gti = torch.where(masks[bi][None] == target_idxs[i][j].view(-1, 1, 1), 1.0, 0.0)
                         else:
                             mask_gti = masks[target_idxs[i]][j]
+
                         losses["add"] += self.single_mask_loss(mask_gti, prd_add[j], proto[bi], mxyxy[j], mask_area[j])
                 elif target_type == "keypoint":
                     # key point loss
@@ -661,7 +662,7 @@ class ComputeLoss:
                 j, k = ((gxy % 1. < g) & (gxy > 1.)).T
                 l, m = ((gxi % 1. < g) & (gxi > 1.)).T
                 j = torch.stack((torch.ones_like(j), j, k, l, m))
-                t = t.repeat((j.shape[0], 1, 1))[j]  # FIXME: was 5
+                t = t.repeat((j.shape[0], 1, 1))[j]  # was 5  (5, 1, 1)
                 offsets = (torch.zeros_like(gxy)[None] + off[:, None])[j]
             else:
                 # no targets
@@ -996,7 +997,6 @@ class ComputeLossOTA:
         for i in range(self.n_layers):  # number of (scaling) levels / model heads in model prediction 'p'
             anchors = self.anchors[i]
             # gain: override / initialize everything related to coordinates ...
-            # FIXME: WHY IS predictions A DICTIONARY WHEN SEGMENTING AN IMAGE (AND A LIST OF TENSORS OTHERWISE)?
             gain[idx_xywh] = torch.tensor(predictions[i].shape, device=device)[[3, 2] * (len(idx_xywh) // 2)]  # xyxy gain
             # p[0].shape = torch.Size([6, 3, 80, 80, 13]) (for bounding-boxes as well as for keypoints)
             # p[1].shape = torch.Size([6, 3, 40, 40, 13])
@@ -1035,14 +1035,7 @@ class ComputeLossOTA:
             gi, gj = gij.T  # grid xy indices
 
             # Append
-            # image/batch
-            if len(t[:, 0].shape) > 1:
-                # FIXME: how should this ever be reached?
-                batch = t[:, 0].long().T
-            else:
-                batch = t[:, 0].long()
-            # FIXME: compatibility warning: #  Consider `x.mT` to transpose batches of matrices or `x.permute(*torch.arange(x.ndim - 1, -1, -1))` to reverse the dimensions of a tensor.
-
+            batch = t[:, 0].long()
             idx_anchor = t[:, -1].long()  # anchor indices
             # image/batch, best anchor, grid indices
             indices.append((batch, idx_anchor, gj.clamp_(0, gain[3] - 1), gi.clamp_(0, gain[2] - 1)))
@@ -1324,7 +1317,7 @@ class ComputeLossBinOTA:
 
         return matching_bs, matching_as, matching_gjs, matching_gis, matching_targets, matching_anchs
 
-    def find_3_positive(self, p, targets: torcht.Tensor):
+    def find_3_positive(self, p, targets: torch.Tensor):
         device = targets.device
 
         # Build targets for compute_loss(), input targets(image,class,x,y,w,h)
