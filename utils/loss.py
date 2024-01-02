@@ -586,27 +586,34 @@ class ComputeLoss:
         loss = nn.functional.binary_cross_entropy_with_logits(pred_mask, gt_mask, reduction="none")
         return (crop_masks(loss, xyxy).mean(dim=(1, 2)) / area).mean()
 
-    def get_target_indices(self, sz_label: int):
+    def get_target_indices(self, sz_label: int) -> Dict[str, List[int]]:
         # bounding-boxes as target:
         # (image in batch, class, x, y, w, h)
         idx_batch = 0
         idx_cls = 1
         idx_xy = [2, 3]  # coordinates (relative)
         idx_wh = [4, 5]  # width / height of bounding boxes
-        idx_xywh = idx_xy + idx_wh
         # keypoints add [x1, y1, visibility1, ...]
         # segment add [x1, y1, x2, y2, ...]
         idx_add = [i for i in range(6, sz_label)]
         idx_anchor = sz_label
 
-        return idx_batch, idx_cls, idx_xy, idx_wh, idx_xywh, idx_add, idx_anchor
+        return {
+            "batch": idx_batch,
+            "cls": idx_cls,
+            "xy": idx_xy,
+            "wh": idx_wh,
+            "xywh": idx_xy + idx_wh,
+            "add": idx_add,
+            "anchor": idx_anchor
+        }
 
     def build_targets(self, predictions, targets: torch.Tensor):
         device = targets.device
 
         # check label size, expecting bounding box or bounding box + keypoints / masks
         sz_label = targets.shape[1]
-        idx_batch, idx_cls, idx_xy, idx_wh, idx_xywh, idx_add, idx_anchor = self.get_target_indices(sz_label)
+        idx_t = self.get_target_indices(sz_label)
 
         # Build targets for compute_loss(), input targets(image, class, x, y, w, h)
 
@@ -634,7 +641,7 @@ class ComputeLoss:
             batch = predictions[0].shape[0]
             target_indices = []
             for i in range(batch):
-                num = (targets[:, idx_batch] == i).sum()  # find number of targets of each image
+                num = (targets[:, idx_t["batch"]] == i).sum()  # find number of targets of each image
                 target_indices.append(torch.arange(num, device=device).float().view(1, num).repeat(n_anchors, 1) + 1)
             target_indices = torch.cat(target_indices, 1)  # (n_anchors, n_targets)
         else:
@@ -661,13 +668,13 @@ class ComputeLoss:
         for i in range(self.n_layers):  # number of (scaling) levels / model heads in model prediction
             anchors = self.anchors[i]
             # gain: override / initialize everything related to coordinates ...
-            gain[idx_xywh] = torch.tensor(predictions[i].shape, device=device)[[3, 2] * (len(idx_xywh) // 2)]  # xyxy gain
+            gain[idx_t["xywh"]] = torch.tensor(predictions[i].shape, device=device)[[3, 2] * (len(idx_t["xywh"]) // 2)]  # xyxy gain
 
             # Match targets to anchors
             t = targets * gain
             if n_targets:
                 # filter matches for reasonable width/height ratios
-                r = t[:, :, idx_wh] / anchors[:, None]  # wh ratio
+                r = t[:, :, idx_t["wh"]] / anchors[:, None]  # wh ratio
                 j = torch.max(r, 1. / r).max(2)[0] < self.hyp['anchor_t']  # compare
                 # j = wh_iou(anchors, t[:, 4:6]) > model.hyp['iou_t']  # iou(3,n)=wh_iou(anchors(3,2), gwh(n,2))
 
@@ -675,8 +682,8 @@ class ComputeLoss:
                 t = t[j]  # filter
 
                 # Offsets to grid cells
-                gxy = t[:, idx_xy]  # grid xy
-                gxi = gain[idx_xy] - gxy  # inverse
+                gxy = t[:, idx_t["xy"]]  # grid xy
+                gxi = gain[idx_t["xy"]] - gxy  # inverse
                 j, k = ((gxy % 1. < g) & (gxy > 1.)).T
                 l, m = ((gxi % 1. < g) & (gxi > 1.)).T
                 j = torch.stack((torch.ones_like(j), j, k, l, m))
@@ -688,13 +695,13 @@ class ComputeLoss:
                 offsets = 0
 
             # Define
-            batch, cls = t[:, [idx_batch, idx_cls]].long().T
-            gxy = t[:, idx_xy]  # grid xy
-            gwh = t[:, idx_wh]  # grid wh
-            add_pts = t[:, idx_add]  # batch nr., class, x, y, w, h + (key/segment)points
+            batch, cls = t[:, [idx_t["batch"], idx_t["cls"]]].long().T
+            gxy = t[:, idx_t["xy"]]  # grid xy
+            gwh = t[:, idx_t["wh"]]  # grid wh
+            add_pts = t[:, idx_t["add"]]  # batch nr., class, x, y, w, h + (key/segment)points
             # kpts = t[:, 7:]  # batch nr., class, x, y, w, h + keypoints
             # slice anchor and target indices
-            idxa, idxt = t[:, idx_anchor: idx_anchor + 2].long().T
+            idxa, idxt = t[:, idx_t["anchor"]:idx_t["anchor"] + 2].long().T
 
             gij = (gxy - offsets).long()
             gi, gj = gij.T  # grid xy indices
@@ -849,27 +856,49 @@ class ComputeLossOTA:
 
         return predictions_, proto
 
-    def get_target_indices(self, sz_label: int):
+    def get_target_indices(self, sz_label: int) -> Dict[str, List[int]]:
         # bounding-boxes as target:
         # (image in batch, class, x, y, w, h)
         idx_batch = 0
         idx_cls = 1
         idx_xy = [2, 3]  # coordinates (relative)
         idx_wh = [4, 5]  # width / height of bounding boxes
-        idx_xywh = idx_xy + idx_wh
         # keypoints add [x1, y1, visibility1, ...]
         # segment add [x1, y1, x2, y2, ...]
         idx_add = [i for i in range(6, sz_label)]
         idx_anchor = sz_label
 
-        return idx_batch, idx_cls, idx_xy, idx_wh, idx_xywh, idx_add, idx_anchor
+        return {
+            "batch": idx_batch,
+            "cls": idx_cls,
+            "xy": idx_xy,
+            "wh": idx_wh,
+            "xywh": idx_xy + idx_wh,
+            "add": idx_add,
+            "anchor": idx_anchor
+        }
+
+    def get_prediction_indices(self, sz_label: int) -> Dict[str, List[int]]:
+        idx_xy = [0, 1]
+        idx_wh = [2, 3]
+        idx_obj = [4]
+        idx_cls = [i for i in range(5, 5 + self.n_classes)]
+        idx_add = [i for i in range(5 + self.n_classes, sz_label)]
+
+        return {
+            "xy": idx_xy,
+            "wh": idx_wh,
+            "obj": idx_obj,
+            "cls": idx_cls,
+            "add": idx_add
+        }
 
     def build_targets(self, predictions, targets: torch.Tensor, imgs):
         device = targets.device
 
         # check label size, expecting bounding box or bounding box + keypoints / masks
         sz_label = targets.shape[1]
-        idx_batch, idx_cls, idx_xy, idx_wh, idx_xywh, idx_add, idx_anchor = self.get_target_indices(sz_label)
+        idx_t = self.get_target_indices(sz_label)
 
         indices, anchors = self.find_3_positive(predictions, targets)
         # image/batch, best anchor, grid indices
@@ -895,7 +924,7 @@ class ComputeLossOTA:
                 continue
 
             # make coordinates absolute
-            txywh = this_target[:, idx_xywh] * torch.tensor((imgs[batch_idx].shape[1:] * 2), device=device)
+            txywh = this_target[:, idx_t["xywh"]] * torch.tensor((imgs[batch_idx].shape[1:] * 2), device=device)
             # transform target coordinates to corner coordinates
             txyxy = xywh2xyxy(txywh)
 
@@ -930,20 +959,14 @@ class ComputeLossOTA:
 
                 fg_pred = prd_i[b, a, gj, gi]
                 # indices for prediction
-                sz_label = prd_i.shape[-1]
-                idx_p_xy = [0, 1]
-                idx_p_wh = [2, 3]
-                idx_p_obj = [4]
-                idx_p_cls = [i for i in range(5, 5 + self.n_classes)]
-                idx_p_add = [i for i in range(5 + self.n_classes, sz_label)]
+                idx_p = self.get_prediction_indices(prd_i.shape[-1])
 
-                idx_p = {"obj": idx_p_obj, "cls": idx_p_cls, "add": idx_p_add}
-                for ky, val in idx_p.items():
-                    prds[ky].append(fg_pred[:, val])
+                for ky in prds:
+                    prds[ky].append(fg_pred[:, idx_p[ky]])
 
                 grid = torch.stack([gi, gj], dim=1)
-                pxy = (fg_pred[:, idx_p_xy].sigmoid() * 2. - 0.5 + grid) * self.stride[i]  # / 8.
-                pwh = (fg_pred[:, idx_p_wh].sigmoid() * 2) ** 2 * anchors[i][lg] * self.stride[i]  # / 8.
+                pxy = (fg_pred[:, idx_p["xy"]].sigmoid() * 2. - 0.5 + grid) * self.stride[i]  # / 8.
+                pwh = (fg_pred[:, idx_p["wh"]].sigmoid() * 2) ** 2 * anchors[i][lg] * self.stride[i]  # / 8.
                 pxywh = torch.cat([pxy, pwh], dim=-1)
                 pxyxy = xywh2xyxy(pxywh)
                 pxyxys.append(pxyxy)
