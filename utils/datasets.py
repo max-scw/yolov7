@@ -557,7 +557,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
 
         ## DEBUGGING
         assert len(self.segments) == len(self.labels)
-        assert all([len(seg) == lbl.shape[0] for seg, lbl in zip(self.segments, self.labels)])
+        assert all([len(seg) == lbl.shape[0] for seg, lbl in zip(self.segments, self.labels) if seg])
 
     def cache_labels(self, path_to_cache: Union[str, Path] = './labels.cache', prefix: str = '') -> Dict[str, Any]:
         # ensure pathlib object

@@ -428,7 +428,7 @@ class APLoss(torch.autograd.Function):
 class ComputeLoss:
     # target_type = "bbox"
     # Compute losses
-    def __init__(self, model, autobalance=False, overlap=False):
+    def __init__(self, model, autobalance: bool = False, overlap: bool = False):
         super().__init__()
         device = next(model.parameters()).device  # get model device
         h = model.hyp  # hyperparameters
@@ -457,7 +457,7 @@ class ComputeLoss:
         for ky in ['n_anchors', 'n_classes', 'n_layers', 'anchors', 'stride']:
             setattr(self, ky, getattr(det, ky))
 
-    def __call__(self, predictions, targets, masks=None):  # predictions, targets, model
+    def __call__(self, predictions, targets: torch.Tensor, masks=None):  # predictions, targets, model
         device = targets.device
 
         # batch_size, n_masks, mask_h, mask_w = proto.shape  # batch size, number of masks, mask height, mask width
@@ -473,15 +473,24 @@ class ComputeLoss:
         else:
             predictions_ = predictions
 
-            n_add = predictions_[0].shape[-1] - (5 + self.n_classes)
+            n_add = predictions_[0].shape[-1] - (5 + self.n_classes)  # xywh + confidence
             if n_add > 0:
                 target_type = "keypoint"
-                assert n_add % 3 == 0, "Keypoints expected but input has unexpected shape"
-                n_kpts = int(n_add // 3)
             else:
                 target_type = "bbox"
         self.target_type = target_type
         self.n_add = n_add
+
+        # check fornat
+        sz_label = predictions_[0].shape[-1]
+        msg = "Unexpected shape of the predictions. Expecting {} entries for {} but the shape of the label was {}."
+        if self.target_type == "bbox":
+            assert sz_label == 5 + 1, msg.format("6", "bounding-boxes", sz_label)
+        elif self.target_type == "keypoint":
+            assert n_add % 3 == 0, msg.format("5 + 3%", "key-points", sz_label)
+        elif self.target_type == "segment":
+            assert n_add % 2 == 0, msg.format("5 + %2", "polygons/segments", sz_label)
+
 
         # initialize losses (classes, bounding boxes, objectness)
         loss_types = ["cls", "box", "obj", "add"]
@@ -537,6 +546,7 @@ class ComputeLoss:
                 elif target_type == "keypoint":
                     # key point loss
                     predicted_keypoints = prd_add  # Get predicted keypoints
+                    # TODO: keypoint loss, build_targets() always returns an empty list for targets_add?
                     losses["add"] += nn.functional.mse_loss(predicted_keypoints, targets_add[i])  # Calculate keypoint loss: MSE
 
             obji = self.BCEobj(prd_i[..., 4], target_obj)
@@ -560,8 +570,8 @@ class ComputeLoss:
 
             losses[ky] *= factor
 
-        loss = sum(losses.values())
-        return loss * batch_sz, torch.cat(tuple(losses.values()) + (loss, )).detach()
+        loss_total = sum(losses.values())
+        return loss_total * batch_sz, torch.cat(tuple(losses.values()) + (loss_total, )).detach()
 
     def single_mask_loss(self, gt_mask, pred, proto, xyxy, area):
         # Mask loss for one image
@@ -569,14 +579,11 @@ class ComputeLoss:
         loss = nn.functional.binary_cross_entropy_with_logits(pred_mask, gt_mask, reduction="none")
         return (crop_masks(loss, xyxy).mean(dim=(1, 2)) / area).mean()
 
-    def build_targets(self, predictions, targets):
-        device = targets.device
-
-        # check label size, expecting bounding box or bounding box + keypoints
-        sz_label = targets.shape[1]
+    def get_target_indices(self, sz_label: int):
         # bounding-boxes as target:
         # (image in batch, class, x, y, w, h)
-        sz_label_bbox = 6
+        idx_batch = 0
+        idx_cls = 1
         idx_xy = [2, 3]  # coordinates (relative)
         idx_wh = [4, 5]  # width / height of bounding boxes
         idx_xywh = idx_xy + idx_wh
@@ -585,19 +592,23 @@ class ComputeLoss:
         idx_add = [i for i in range(6, sz_label)]
         idx_anchor = sz_label
 
-        msg = "Unexpected shape of the targets. Expecting {} entries for {} but the shape of the label was {}."
-        if self.target_type == "bbox":
-            assert sz_label == sz_label_bbox, msg.format("6", "bounding-boxes", sz_label)
-        elif self.target_type == "keypoint":
-            assert sz_label % 3 == 0, msg.format("6 + 3%", "key-points", sz_label)
-        elif self.target_type == "segment":
-            assert sz_label % 2 == 0, msg.format("6 + %2", "polygons/segments", sz_label)
+        return idx_batch, idx_cls, idx_xy, idx_wh, idx_xywh, idx_add, idx_anchor
+
+    def build_targets(self, predictions, targets: torch.Tensor):
+        device = targets.device
+
+        # check label size, expecting bounding box or bounding box + keypoints / masks
+        sz_label = targets.shape[1]
+        idx_batch, idx_cls, idx_xy, idx_wh, idx_xywh, idx_add, idx_anchor = self.get_target_indices(sz_label)
 
         # Build targets for compute_loss(), input targets(image, class, x, y, w, h)
 
         # number of anchors, targets
         n_anchors = self.n_anchors
         n_targets = targets.shape[0]
+        # layers
+        n_layers = len(predictions)
+        assert n_layers == self.n_layers
 
         # initialize lists
         target_cls, target_box, target_add, indices, all_anchors, target_idxs, xywh_norm = [], [], [], [], [], [], []
@@ -616,7 +627,7 @@ class ComputeLoss:
             batch = predictions[0].shape[0]
             target_indices = []
             for i in range(batch):
-                num = (targets[:, 0] == i).sum()  # find number of targets of each image
+                num = (targets[:, idx_batch] == i).sum()  # find number of targets of each image
                 target_indices.append(torch.arange(num, device=device).float().view(1, num).repeat(n_anchors, 1) + 1)
             target_indices = torch.cat(target_indices, 1)  # (n_anchors, n_targets)
         else:
@@ -670,7 +681,7 @@ class ComputeLoss:
                 offsets = 0
 
             # Define
-            batch, cls = t[:, :2].long().T
+            batch, cls = t[:, [idx_batch, idx_cls]].long().T
             gxy = t[:, idx_xy]  # grid xy
             gwh = t[:, idx_wh]  # grid wh
             add_pts = t[:, idx_add]  # batch nr., class, x, y, w, h + (key/segment)points
@@ -1042,7 +1053,6 @@ class ComputeLossOTA:
             anch.append(anchors[idx_anchor])  # anchors
 
         return indices, anch
-
 
 class ComputeLossBinOTA:
     # Compute losses
