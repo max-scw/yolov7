@@ -464,13 +464,7 @@ class ComputeLoss:
 
         predictions_, proto = self._format_predictions(predictions)
 
-        targets_cls, targets_box, targets_add, indices, anchors, target_idxs, xywh_norm = self.build_targets(predictions_, targets)  # targets  # FIXME: build targets for segments
-        split_targets = {
-            "cls": targets_cls,
-            "box": targets_box,
-            "add": targets_add,
-            "idx": target_idxs,
-        }
+        indices, anchors, split_targets, xywh_norm = self.build_targets(predictions_, targets)  # targets  # FIXME: build targets for segments
 
         return self._calulate_loss(
             predictions_,
@@ -650,7 +644,9 @@ class ComputeLoss:
         assert n_layers == self.n_layers
 
         # initialize lists
-        target_cls, target_box, target_add, indices, all_anchors, target_idxs, xywh_norm = [], [], [], [], [], [], []
+        split_targets = {ky: [] for ky in ["cls", "box", "add", "idx"]}
+        # target_cls, target_box, target_add, indices, all_anchors, target_idxs, xywh_norm = [], [], [], [], [], [], []
+        indices, all_anchors, xywh_norm = [], [], []
 
         # initialize union gain (i.e. [1, 1, 1, ...]) # TODO: check for keypoints if always 6
         gain = torch.ones(sz_label + 2, device=device).long()  # normalized to grid-space gain
@@ -678,7 +674,10 @@ class ComputeLoss:
             anchor_indices[:, :, None],
             target_indices[..., None]
         ), 2)  # append anchor indices
-        # targets (bounding-box):   (batch, class, x, y, w, h, anchor, target-idx) = 2 + 5
+        # update indices
+        idx_t["target_idx"] = targets.shape[2]
+        idx_t["anchor_idx"] = targets.shape[2] - 1
+        # targets (bounding-box):   (batch, class, x, y, w, h, anchor, target-idx) = 2 + 4 + 2
         # targets (keypoints):      (batch, class, x, y, w, h, [x1, y1, v1], ..., anchor, target-idx)   = 2 + 5 + 3 * n_keypoints
         # targets (masks):          (batch, class, x, y, w, h, [x1, y1], ..., anchor, target-idx)
 
@@ -730,7 +729,7 @@ class ComputeLoss:
             add_pts = t[:, idx_t["add"]]  # batch nr., class, x, y, w, h + (key/segment)points
             # kpts = t[:, 7:]  # batch nr., class, x, y, w, h + keypoints
             # slice anchor and target indices
-            idxa, idxt = t[:, idx_t["anchor"]:idx_t["anchor"] + 2].long().T
+            idxa, idxt = t[:, [idx_t["anchor_idx"], idx_t["target_idx"]]].long().T
 
             gij = (gxy - offsets).long()
             gi, gj = gij.T  # grid xy indices
@@ -738,16 +737,16 @@ class ComputeLoss:
             # image/batch, best anchor, grid indices
             indices.append((batch, idxa, gj.clamp_(0, gain[3] - 1), gi.clamp_(0, gain[2] - 1)))
 
+            # Append
             box = torch.cat((gxy - gij, gwh), 1)
-            target_box.append(box)  # box
-            target_cls.append(cls)  # class
-            target_add.append(add_pts)  # additional points, i.e. key points or points of polygon segment
-            target_idxs.append(idxt)
+            split_targets["box"].append(box)  # box
+            split_targets["cls"].append(cls)  # class
+            split_targets["add"].append(add_pts)  # additional points, i.e. key points or points of polygon segment
+            split_targets["idx"].append(idxt)
             xywh_norm.append(torch.cat((gxy, gwh), 1) / gain[2:6])  # xywh normalized
             all_anchors.append(anchors[idxa])  # anchors
 
-        return target_cls, target_box, target_add, indices, all_anchors, target_idxs, xywh_norm
-
+        return indices, all_anchors, split_targets, xywh_norm
 
 class ComputeLossOTA:
     # Over-the-Air training => various different losses
