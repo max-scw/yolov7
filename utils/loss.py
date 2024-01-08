@@ -1025,7 +1025,7 @@ class ComputeLossOTA(ComputeLoss):
         for ky in ['n_anchors', 'n_classes', 'n_layers', 'anchors', 'stride']:
             setattr(self, ky, getattr(det, ky))
 
-    def __call__(self, predictions, targets: torch.Tensor, imgs, masks=None):  # predictions, targets, model
+    def __call__(self, predictions, targets: torch.Tensor, imgs: torch.Tensor, masks: torch.Tensor = None):  # predictions, targets, model
         device = targets.device
 
         predictions_, proto = self._format_predictions(predictions)
@@ -1053,7 +1053,7 @@ class ComputeLossOTA(ComputeLoss):
             new_split_targets,
             proto=proto,
             masks=masks,
-            indices=indices,
+            indices=new_indices,
             anchors=new_anchors,
             xywh_norm=new_xywh_norm,
             device=targets.device

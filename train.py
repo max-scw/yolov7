@@ -292,7 +292,7 @@ def train(hyp, opt, device, tb_writer=None):
 
     # Process 0
     if rank in [-1, 0]:
-        testloader = create_dataloader(
+        testloader, _ = create_dataloader(
             test_path, imgsz_test, batch_size * 2, gs, opt,  # testloader
             hyp=hyp,
             cache=opt.cache_images and not opt.notest,
@@ -305,7 +305,7 @@ def train(hyp, opt, device, tb_writer=None):
             augment=False,
             n_keypoints=n_keypoints,
             predict_masks=opt.masks
-        )[0]
+        )
 
         if not opt.resume:
             labels = np.concatenate(dataset.labels, 0)
@@ -432,19 +432,20 @@ def train(hyp, opt, device, tb_writer=None):
             # Forward
             with amp.autocast(enabled=cuda):
                 pred = model(imgs)  # forward
+                masks_ = masks.to(device) if isinstance(masks, torch.Tensor) else masks
 
                 if 'loss_ota' not in hyp or hyp['loss_ota'] == 1:
-                    # loss, loss_items = compute_loss_ota(pred, targets.to(device), imgs)  # loss scaled by batch_size
-                    loss, loss_items = compute_loss(
+                    loss, loss_items = compute_loss_ota(
                         pred,
                         targets.to(device),
-                        masks=masks.to(device) if isinstance(masks, torch.Tensor) else masks
-                    )
+                        imgs=imgs,
+                        masks=masks_
+                    )  # loss scaled by batch_size
                 else:
                     loss, loss_items = compute_loss(
                         pred,
                         targets.to(device),
-                        masks=masks.to(device) if isinstance(masks, torch.Tensor) else masks
+                        masks=masks_
                     )  # loss scaled by batch_size
 
                 if rank != -1:
@@ -658,10 +659,6 @@ if __name__ == '__main__':
 
     opt = parser.parse_args()
 
-
-
-
-
     print_debug_msg(f"parser opt={opt}")
 
     # Set DDP variables
@@ -703,8 +700,8 @@ if __name__ == '__main__':
         opt.batch_size = opt.total_batch_size // opt.world_size
 
     # Hyperparameters
-    with open(opt.hyp) as f:
-        hyp = yaml.load(f, Loader=yaml.SafeLoader)  # load hyps
+    with open(opt.hyp) as fid:
+        hyp = yaml.load(fid, Loader=yaml.SafeLoader)  # load hyps
 
     # Train
     logger.info(opt)
