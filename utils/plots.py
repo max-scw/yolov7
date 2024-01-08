@@ -213,7 +213,7 @@ def plot_images(
                     # TODO: plot mask (in same color)
 
             # Plot masks
-            if len(masks):
+            if isinstance(masks, (torch.Tensor, np.ndarray)) and len(masks) > 1:
                 if masks.max() > 1.0:  # mean that masks are overlap
                     image_masks = masks[[i]]  # (1, 640, 640)
                     n_layers = len(image_targets)

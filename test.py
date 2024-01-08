@@ -159,19 +159,31 @@ def test(
                 continue
 
             # Masks
-            lg_masks = [si] if overlap else targets[:, 0] == si
-            gt_masks = masks[lg_masks]
-            proto_out = train_out[1][si]
-            pred_masks = process(proto_out, pred[:, 6:], pred[:, :4], shape=img[si].shape[1:])
+            is_segmentation = False
+            if isinstance(pred, torch.Tensor):
+                pass
+            elif isinstance(pred, list) and len(pred) == 2:
+                is_segmentation = True
+            else:
+                raise TypeError(
+                    f"Unexpected type of model output. "
+                    f"A tensor or a two-element-list of tensors was expected but was {type(pred)}."
+                )
+
+            if is_segmentation:
+                # lg_masks = [si] if overlap else targets[:, 0] == si
+                # gt_masks = masks[lg_masks]
+                proto_out = train_out[1][si]
+                pred_masks = process(proto_out, pred[:, 6:], pred[:, :4], shape=img[si].shape[1:])
+
+                # add masks to plot
+                pred_masks = torch.as_tensor(pred_masks, dtype=torch.uint8)
+                if plots and i_batch < 3:
+                    plot_masks.append(pred_masks[:max_n_masks].cpu())  # filter top 15 to plot
 
             # Predictions
             predn = pred.clone()
             scale_coords(img[si].shape[1:], predn[:, :4], shapes[si][0], shapes[si][1])  # native-space pred
-
-            # add masks to plot
-            pred_masks = torch.as_tensor(pred_masks, dtype=torch.uint8)
-            if plots and i_batch < 3:
-                plot_masks.append(pred_masks[:max_n_masks].cpu())  # filter top 15 to plot
 
             # Append to text file
             if save_txt:
