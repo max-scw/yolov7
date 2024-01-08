@@ -399,27 +399,29 @@ def train(hyp, opt, device, tb_writer=None):
                                     f"{path_to_export.as_posix()}")
                 p2fl = path_to_export / f"{opt.name}_e{epoch}_b{i}.jpg"
                 print_debug_msg(f"{p2fl.as_posix()}: {imgs.shape}")
+                # plot ground truth
                 plot_images(
                     imgs,
                     targets,
                     fname=p2fl.as_posix(),
                     max_subplots=opt.batch_size,
-                    aspect_ratio=16/9
+                    aspect_ratio=16/9,
+                    masks=masks
                 )
 
-            ni = i + n_batches * epoch  # number integrated batches (since train start)
+            n_integrated_batches = i + n_batches * epoch  # number integrated batches (since train start)
             imgs = imgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
 
             # Warmup
-            if ni <= n_warmup_iterations:
+            if n_integrated_batches <= n_warmup_iterations:
                 xi = [0, n_warmup_iterations]  # x interp
                 # model.gr = np.interp(ni, xi, [0.0, 1.0])  # iou loss ratio (obj_loss = 1.0 or iou)
-                accumulate = max(1, np.interp(ni, xi, [1, batch_size_nominal / total_batch_size]).round())
+                accumulate = max(1, np.interp(n_integrated_batches, xi, [1, batch_size_nominal / total_batch_size]).round())
                 for j, x in enumerate(optimizer.param_groups):
                     # bias lr falls from 0.1 to lr0, all other lrs rise from 0.0 to lr0
-                    x['lr'] = np.interp(ni, xi, [hyp['warmup_bias_lr'] if j == 2 else 0.0, x['initial_lr'] * lf(epoch)])
+                    x['lr'] = np.interp(n_integrated_batches, xi, [hyp['warmup_bias_lr'] if j == 2 else 0.0, x['initial_lr'] * lf(epoch)])
                     if 'momentum' in x:
-                        x['momentum'] = np.interp(ni, xi, [hyp['warmup_momentum'], hyp['momentum']])
+                        x['momentum'] = np.interp(n_integrated_batches, xi, [hyp['warmup_momentum'], hyp['momentum']])
 
             # Multi-scale
             if opt.multi_scale:
@@ -431,7 +433,9 @@ def train(hyp, opt, device, tb_writer=None):
 
             # Forward
             with amp.autocast(enabled=cuda):
+                # predict
                 pred = model(imgs)  # forward
+
                 masks_ = masks.to(device) if isinstance(masks, torch.Tensor) else masks
 
                 if 'loss_ota' not in hyp or hyp['loss_ota'] == 1:
@@ -439,13 +443,13 @@ def train(hyp, opt, device, tb_writer=None):
                         pred,
                         targets.to(device),
                         imgs=imgs,
-                        masks=masks_
+                        masks=masks_  # ground truth mask
                     )  # loss scaled by batch_size
                 else:
                     loss, loss_items = compute_loss(
                         pred,
                         targets.to(device),
-                        masks=masks_
+                        masks=masks_    # ground truth mask
                     )  # loss scaled by batch_size
 
                 if rank != -1:
@@ -457,7 +461,7 @@ def train(hyp, opt, device, tb_writer=None):
             scaler.scale(loss).backward()
 
             # Optimize
-            if ni % accumulate == 0:
+            if n_integrated_batches % accumulate == 0:
                 scaler.step(optimizer)  # optimizer.step
                 scaler.update()
                 optimizer.zero_grad()
@@ -473,9 +477,14 @@ def train(hyp, opt, device, tb_writer=None):
                 pbar.set_description(info_str)
 
                 # Plot
-                if plots and ni < 10:
-                    path_to_file = save_dir / f'train_batch{ni}.jpg'  # filename
-                    Thread(target=plot_images, args=(imgs, targets, paths, path_to_file), daemon=True).start() # FIXME: combine with plot above
+                if plots and n_integrated_batches < 10:
+                    path_to_file = save_dir / f'train_batch{n_integrated_batches}.jpg'  # filename
+                    Thread(
+                        target=plot_images,
+                        args=(imgs, targets, paths, path_to_file),
+                        kwargs={"masks": masks},
+                        daemon=True
+                    ).start()  # FIXME: combine with plot above
 
             # end batch ------------------------------------------------------------------------------------------------
         # end epoch ----------------------------------------------------------------------------------------------------

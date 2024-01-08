@@ -21,7 +21,7 @@ from scipy.signal import butter, filtfilt
 from utils.general import xywh2xyxy, xyxy2xywh
 from utils.metrics import fitness
 
-from typing import List, Union, Any
+from typing import List, Union, Tuple, Dict, Any
 
 # Settings
 matplotlib.rc('font', **{'size': 11})
@@ -56,7 +56,7 @@ def butter_lowpass_filtfilt(data, cutoff=1500, fs=50000, order=5):
     return filtfilt(b, a, data)  # forward-backward filter
 
 
-def plot_one_box(x, img, color=None, label=None, line_thickness=3):
+def plot_one_box(x, img, color: Union[Tuple[int], str] = None, label: str = None, line_thickness: int = 3):
     # Plots one bounding box on image img
     tl = line_thickness or round(0.002 * (img.shape[0] + img.shape[1]) / 2) + 1  # line/font thickness
     color = color or [random.randint(0, 255) for _ in range(3)]
@@ -104,32 +104,44 @@ def plot_wh_methods():  # from utils.plots import *; plot_wh_methods()
     fig.savefig('comparison.png', dpi=200)
 
 
-def output_to_target(output):
+def output_to_target(output: List[torch.Tensor], max_det: int = -1) -> np.ndarray:
     # Convert model output to target format [batch_id, class_id, x, y, w, h, conf]
-    targets = []
-    for i, o in enumerate(output):
-        for x in o.cpu().numpy():
-            box = x[..., :4]
-            conf = x[..., 4]
-            cls = x[..., 5]
-            targets.append([i, cls, *list(*xyxy2xywh(np.array(box)[None])), conf])
-    return np.array(targets)
+    targets_ = []
+    for i, out in enumerate(output):
+        if max_det < 0:
+            max_det_ = len(out)
+        else:
+            max_det_ = max_det
+
+        box, conf, cls = out[:max_det_, :6].cpu().split((4, 1, 1), 1)
+        j = torch.full((conf.shape[0], 1), i)
+        targets_.append(torch.cat((j, cls, xyxy2xywh(box), conf), 1))
+    # stack list and implicitly convert to numpy.ndarray
+    return np.vstack(targets_)
 
 
-def plot_images(images,
-                targets,
-                paths: Union[str, Path] = None,
-                fname: str = 'images.jpg',
-                names: List[str] = None,
-                max_size: int = 640,
-                max_subplots: int = 16,
-                aspect_ratio: float = 5 / 4
-                ) -> np.ndarray:
+def plot_images(
+        images: Union[torch.Tensor, np.ndarray],
+        targets: Union[torch.Tensor, np.ndarray],
+        paths: Union[str, Path] = None,
+        fname: str = 'images.jpg',
+        names: Dict[str, str] = None,
+        max_size: int = 640,
+        max_subplots: int = 16,
+        aspect_ratio: float = 5 / 4,
+        masks: List[torch.Tensor] = None,  #Union[torch.Tensor, np.ndarray]
+        th_conf: float = 0.25 # confidence threshold to supress plotting an element (box or mask)
+) -> np.ndarray:
     # Plot image grid with labels
     if isinstance(images, torch.Tensor):
         images = images.cpu().float().numpy()
     if isinstance(targets, torch.Tensor):
         targets = targets.cpu().numpy()
+    if isinstance(masks, torch.Tensor):
+        masks = masks.cpu().numpy().astype(int)
+
+
+
 
     # un-normalise
     if np.max(images[0]) <= 1:
@@ -149,11 +161,14 @@ def plot_images(images,
         h = math.ceil(scale_factor * h)
         w = math.ceil(scale_factor * w)
 
+    # initialize color list for classes
     colors = color_list()  # list of colors
+    # allocate image
     mosaic = np.full((int(ns_h * h), int(ns_w * w), 3), 255, dtype=np.uint8)  # init
     for i, img in enumerate(images):
         if i == max_subplots:  # if last batch has fewer images than we expect
             break
+        # determine the offset for this particular image in the stacked mosaic image
         i_x = i % ns_w
         i_y = i // ns_w
         block_x = int(w * i_x)
@@ -163,29 +178,70 @@ def plot_images(images,
         if scale_factor < 1:
             img = cv2.resize(img, (w, h))
 
+        # build image
         mosaic[block_y:block_y + h, block_x:block_x + w, :] = img
         if len(targets) > 0:
-            image_targets = targets[targets[:, 0] == i]
+            # prepare bounding boxes
+            lg = targets[:, 0] == i  # targets of this particular batch
+            image_targets = targets[lg]
             boxes = xywh2xyxy(image_targets[:, 2:6]).T
             classes = image_targets[:, 1].astype('int')
             labels = image_targets.shape[1] == 6  # labels if no conf column
             conf = None if labels else image_targets[:, 6]  # check for confidence presence (label vs pred)
 
+            # scale coordinates if necessary (absolute coordinates are required
             if boxes.shape[1]:
                 if boxes.max() <= 1.01:  # if normalized with tolerance 0.01
                     boxes[[0, 2]] *= w  # scale to pixels
                     boxes[[1, 3]] *= h
                 elif scale_factor < 1:  # absolute coords need scale if image scales
                     boxes *= scale_factor
+
+            # shift to correct position in mosaic
             boxes[[0, 2]] += block_x
             boxes[[1, 3]] += block_y
+
+            # plot elements
             for j, box in enumerate(boxes.T):
                 cls = int(classes[j])
                 color = colors[cls % len(colors)]
                 cls = names[cls] if names else cls
-                if labels or conf[j] > 0.25:  # 0.25 conf thresh
+                if labels or conf[j] > th_conf:  # 0.25 conf thresh
+                    # plot single box
                     label = '%s' % cls if labels else '%s %.1f' % (cls, conf[j])
                     plot_one_box(box, mosaic, label=label, color=color, line_thickness=tl)
+                    # TODO: plot mask (in same color)
+
+            # Plot masks
+            if len(masks):
+                if masks.max() > 1.0:  # mean that masks are overlap
+                    image_masks = masks[[i]]  # (1, 640, 640)
+                    n_layers = len(image_targets)
+                    index = np.arange(n_layers).reshape(n_layers, 1, 1) + 1
+                    image_masks = np.repeat(image_masks, n_layers, axis=0)
+                    image_masks = np.where(image_masks == index, 1.0, 0.0)
+                else:
+                    image_masks = masks[lg]
+
+                # im = np.asarray(annotator.im).copy()
+                for j, box in enumerate(boxes.T):
+                    cls = int(classes[j])
+                    color = colors[cls % len(colors)]
+
+                    if labels or conf[j] > th_conf:  # 0.25 conf thresh
+                        mh, mw = image_masks[j].shape
+                        if mh != h or mw != w:
+                            mask = image_masks[j].astype(np.uint8)
+                            mask = cv2.resize(mask, (w, h))
+                            mask = mask.astype(bool)
+                        else:
+                            mask = image_masks[j].astype(bool)
+
+                        # write onto image
+                        # with contextlib.suppress(Exception):
+                        img_sct = mosaic[block_y:block_y + h, block_x:block_x + w, :][mask] * 0.4 + np.array(color) * 0.6
+                        mosaic[block_y:block_y + h, block_x:block_x + w, :][mask] = img_sct
+
 
         # Draw image filename labels
         if paths:
@@ -203,6 +259,44 @@ def plot_images(images,
         # cv2.imwrite(fname, cv2.cvtColor(mosaic, cv2.COLOR_BGR2RGB))  # cv2 save
         Image.fromarray(mosaic).save(fname)  # PIL save
     return mosaic
+
+
+def plot_masks(img, masks, colors, alpha=0.5):
+    """
+    Args:
+        img (tensor): img is in cuda, shape: [3, h, w], range: [0, 1]
+        masks (tensor): predicted masks on cuda, shape: [n, h, w]
+        colors (List[List[Int]]): colors for predicted masks, [[r, g, b] * n]
+    Return:
+        ndarray: img after draw masks, shape: [h, w, 3]
+
+    transform colors and send img_gpu to cpu for the most time.
+    """
+    img_gpu = img.clone()
+    num_masks = len(masks)
+    if num_masks == 0:
+        return img.permute(1, 2, 0).contiguous().cpu().numpy() * 255
+
+    # [n, 1, 1, 3]
+    # faster this way to transform colors
+    colors = torch.tensor(colors, device=img.device).float() / 255.0
+    colors = colors[:, None, None, :]
+    # [n, h, w, 1]
+    masks = masks[:, :, :, None]
+    masks_color = masks.repeat(1, 1, 1, 3) * colors * alpha
+    inv_alph_masks = masks * (-alpha) + 1
+    masks_color_summand = masks_color[0]
+    if num_masks > 1:
+        inv_alph_cumul = inv_alph_masks[:(num_masks - 1)].cumprod(dim=0)
+        masks_color_cumul = masks_color[1:] * inv_alph_cumul
+        masks_color_summand += masks_color_cumul.sum(dim=0)
+
+    # print(inv_alph_masks.prod(dim=0).shape) # [h, w, 1]
+    img_gpu = img_gpu.flip(dims=[0])  # filp channel for opencv
+    img_gpu = img_gpu.permute(1, 2, 0).contiguous()
+    # [h, w, 3]
+    img_gpu = img_gpu * inv_alph_masks.prod(dim=0) + masks_color_summand
+    return (img_gpu * 255).byte().cpu().numpy()
 
 
 def plot_lr_scheduler(optimizer, scheduler, epochs=300, save_dir=''):

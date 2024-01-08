@@ -14,35 +14,48 @@ from models.experimental import attempt_load
 from utils.datasets_segments import create_dataloader
 from utils.general import coco80_to_coco91_class, check_dataset, check_file, check_img_size, check_requirements, \
     box_iou, non_max_suppression, scale_coords, xyxy2xywh, xywh2xyxy, set_logging, increment_path, colorstr
+from utils.general_mask import mask_iou, process_mask, process_mask_upsample, scale_masks
 from utils.metrics import ap_per_class, ConfusionMatrix
 from utils.plots import plot_images, output_to_target, plot_study_txt
 from utils.torch_utils import select_device, time_synchronized, TracedModel
 
+from typing import Union
 
-def test(data,
-         weights=None,
-         batch_size=32,
-         imgsz=640,
-         conf_thres=0.001,
-         iou_thres=0.6,  # for NMS
-         save_json: bool = False,
-         single_cls: bool = False,
-         augment: bool = False,
-         verbose: bool = False,
-         opt: dict = None, # TODO: add
-         model=None,
-         dataloader=None,
-         save_dir=Path(''),  # for saving images
-         save_txt: bool = False,  # for auto-labelling
-         save_hybrid: bool = False,  # for hybrid auto-labelling
-         save_conf: bool = False,  # save auto-label confidences
-         plots: bool = True,
-         wandb_logger=None,
-         compute_loss=None,
-         half_precision: bool = True,
-         trace: bool = False,
-         is_coco: bool = False,
-         v5_metric: bool = False):
+
+def test(
+        data,
+        weights=None,
+        batch_size: int = 32,
+        imgsz: int = 640,
+        conf_thres: float = 0.001,
+        iou_thres: float = 0.6,  # for NMS
+        save_json: bool = False,
+        single_cls: bool = False,
+        augment: bool = False,
+        verbose: bool = False,
+        opt: dict = None, # TODO: add
+        model=None,
+        dataloader=None,
+        save_dir: Union[str, Path] = Path(''),  # for saving images
+        save_txt: bool = False,  # for auto-labelling
+        save_hybrid: bool = False,  # for hybrid auto-labelling
+        save_conf: bool = False,  # save auto-label confidences
+        plots: bool = True,
+        overlap: bool = False,
+        wandb_logger=None,
+        compute_loss=None,
+        half_precision: bool = True,
+        trace: bool = False,
+        is_coco: bool = False,
+        v5_metric: bool = False
+):
+    max_n_masks: int = 15
+    if save_json:
+        check_requirements(['pycocotools'])
+        process = process_mask_upsample  # more accurate
+    else:
+        process = process_mask  # faster
+
     # Initialize/load model and set device
     training = model is not None
     if training:  # called by train.py
@@ -96,7 +109,7 @@ def test(data,
         )[0]
 
     if v5_metric:
-        print("Testing with YOLOv5 AP metric...")
+        print("Testing with YOLOv5 AP metric ...")
     
     seen = 0
     confusion_matrix = ConfusionMatrix(nc=nc)
@@ -106,7 +119,7 @@ def test(data,
     p, r, f1, mp, mr, map50, map, t0, t1 = 0., 0., 0., 0., 0., 0., 0., 0., 0.
     loss = torch.zeros(4, device=device)
     jdict, stats, ap, ap_class, wandb_images = [], [], [], [], []
-    for batch_i, (img, targets, paths, shapes, masks) in enumerate(tqdm(dataloader, desc=s)):
+    for i_batch, (img, targets, paths, shapes, masks) in enumerate(tqdm(dataloader, desc=s)):
         img = img.to(device, non_blocking=True)
         img = img.half() if half else img.float()  # uint8 to fp16/32
         img /= 255.0  # 0 - 255 to 0.0 - 1.0
@@ -132,6 +145,7 @@ def test(data,
             t1 += time_synchronized() - t
 
         # Statistics per image
+        plot_masks = []  # masks for plotting
         for si, pred in enumerate(out):
             labels = targets[targets[:, 0] == si, 1:]
             nl = len(labels)
@@ -144,9 +158,20 @@ def test(data,
                     stats.append((torch.zeros(0, niou, dtype=torch.bool), torch.Tensor(), torch.Tensor(), tcls))
                 continue
 
+            # Masks
+            lg_masks = [si] if overlap else targets[:, 0] == si
+            gt_masks = masks[lg_masks]
+            proto_out = train_out[1][si]
+            pred_masks = process(proto_out, pred[:, 6:], pred[:, :4], shape=img[si].shape[1:])
+
             # Predictions
             predn = pred.clone()
             scale_coords(img[si].shape[1:], predn[:, :4], shapes[si][0], shapes[si][1])  # native-space pred
+
+            # add masks to plot
+            pred_masks = torch.as_tensor(pred_masks, dtype=torch.uint8)
+            if plots and i_batch < 3:
+                plot_masks.append(pred_masks[:max_n_masks].cpu())  # filter top 15 to plot
 
             # Append to text file
             if save_txt:
@@ -176,10 +201,12 @@ def test(data,
                 box = xyxy2xywh(predn[:, :4])  # xywh
                 box[:, :2] -= box[:, 2:] / 2  # xy center to top-left corner
                 for p, b in zip(pred.tolist(), box.tolist()):
-                    jdict.append({'image_id': image_id,
-                                  'category_id': coco91class[int(p[5])] if is_coco else int(p[5]),
-                                  'bbox': [round(x, 3) for x in b],
-                                  'score': round(p[4], 5)})
+                    jdict.append({
+                        'image_id': image_id,
+                        'category_id': coco91class[int(p[5])] if is_coco else int(p[5]),
+                        'bbox': [round(x, 3) for x in b],
+                        'score': round(p[4], 5)
+                    })
 
             # Assign all predictions as incorrect
             correct = torch.zeros(pred.shape[0], niou, dtype=torch.bool, device=device)
@@ -218,11 +245,35 @@ def test(data,
             stats.append((correct.cpu(), pred[:, 4].cpu(), pred[:, 5].cpu(), tcls))
 
         # Plot images
-        if plots and batch_i < 3:
-            file = save_dir / f'test_batch{batch_i}_labels.jpg'  # labels
-            Thread(target=plot_images, args=(img, targets, paths, file, names), daemon=True).start()
-            file = save_dir / f'test_batch{batch_i}_pred.jpg'  # predictions
-            Thread(target=plot_images, args=(img, output_to_target(out), paths, file, names), daemon=True).start()
+        if plots and i_batch < 3:
+            # plot ground truth
+            file = save_dir / f'test_batch{i_batch}_labels.jpg'  # labels
+            Thread(
+                target=plot_images,
+                args=(img, targets, paths, file, names),
+                kwargs={"masks": masks},
+                daemon=True
+            ).start()
+
+            # plot prediction
+            file = save_dir / f'test_batch{i_batch}_pred.jpg'  # predictions
+            # im = plot_images(
+            #     img,
+            #     output_to_target(out, max_det=max_n_masks),
+            #     paths,
+            #     file,
+            #     names,
+            #     masks=torch.cat(plot_masks, dim=0) if len(plot_masks) else None,
+            #     th_conf=0.1
+            # )
+            Thread(
+                target=plot_images,
+                args=(img, output_to_target(out, max_det=max_n_masks), paths, file, names),
+                kwargs={
+                    "masks": torch.cat(plot_masks, dim=0) if len(plot_masks) else None
+                },
+                daemon=True
+            ).start()
 
     # Compute statistics
     stats = [np.concatenate(x, 0) for x in zip(*stats)]  # to numpy
