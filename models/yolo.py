@@ -887,6 +887,12 @@ class Model(nn.Module):
         model_info(self, verbose, img_size)
 
 
+class SegmentationModel(Model):
+    # YOLOv5 segmentation model
+    def __init__(self, cfg='yolov5s-seg.yaml', ch=3, nc=None, anchors=None):
+        super().__init__(cfg, ch, nc, anchors)
+
+
 def parse_model(data_dict, ch):  # model_dict, input_channels(3)
     logger.info('\n%3s%18s%3s%10s  %-40s%-30s' % ('', 'from', 'n', 'params', 'module', 'arguments'))
     # do not rename variables due to eval() function!
