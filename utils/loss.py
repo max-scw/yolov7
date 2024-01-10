@@ -1148,12 +1148,13 @@ class ComputeLossOTA(ComputeLoss):
 
             cost = pair_wise_cls_loss + 3.0 * pair_wise_iou_loss
 
-            matching_matrix = torch.zeros_like(cost)
+            matching_matrix = torch.zeros_like(cost, device=device)
             for gt_idx in range(num_gt):
-                _, pos_idx = torch.topk(cost[gt_idx],
-                                        k=dynamic_ks[gt_idx].item(),
-                                        largest=False
-                                        )
+                _, pos_idx = torch.topk(
+                    cost[gt_idx],
+                    k=dynamic_ks[gt_idx].item(),
+                    largest=False
+                )
                 matching_matrix[gt_idx][pos_idx] = 1.0
 
             del top_k, dynamic_ks  # free up memory
@@ -1196,7 +1197,7 @@ class ComputeLossOTA(ComputeLoss):
             imgs
     ) -> Dict[str, List[torch.Tensor]]:
         device = targets.device
-        indices = self.find_n_positive(predictions, targets)
+        # indices = self.find_n_positive(predictions, targets)
         anchors = self.group_anchors(indices)
 
         # check label size, expecting bounding box or bounding box + keypoints / masks
@@ -1240,7 +1241,7 @@ class ComputeLossOTA(ComputeLoss):
                 gj = all_elements["grid_j"][i]
                 gi = all_elements["grid_i"][i]
 
-                from_which_layer.append(torch.ones(size=(len(b),)) * i)
+                from_which_layer.append(torch.ones(size=(len(b),), device=device) * i)
 
                 fg_pred = prd_i[b, a, gj, gi]
                 # indices for prediction
@@ -1291,12 +1292,13 @@ class ComputeLossOTA(ComputeLoss):
 
             cost = pair_wise_cls_loss + 3.0 * pair_wise_iou_loss
 
-            matching_matrix = torch.zeros_like(cost)
+            matching_matrix = torch.zeros_like(cost, device=device)
             for gt_idx in range(num_gt):
-                _, pos_idx = torch.topk(cost[gt_idx],
-                                        k=dynamic_ks[gt_idx].item(),
-                                        largest=False
-                                        )
+                _, pos_idx = torch.topk(
+                    cost[gt_idx],
+                    k=dynamic_ks[gt_idx].item(),
+                    largest=False
+                )
                 matching_matrix[gt_idx][pos_idx] = 1.0
 
             del top_k, dynamic_ks  # free up memory
@@ -1322,6 +1324,7 @@ class ComputeLossOTA(ComputeLoss):
                 # matching["target_elements"][i].append(this_target[layer_idx])
 
         for i in range(self.n_layers):
+            layer_idx = from_which_layer == i
             if this_target[layer_idx] != []:
                 for ky in matching:
                     matching[ky][i] = torch.cat(matching[ky][i], dim=0)
@@ -1552,7 +1555,7 @@ class ComputeLossBinOTA:
                     + 3.0 * pair_wise_iou_loss
             )
 
-            matching_matrix = torch.zeros_like(cost)
+            matching_matrix = torch.zeros_like(cost, device=device)
 
             for gt_idx in range(num_gt):
                 _, pos_idx = torch.topk(cost[gt_idx],

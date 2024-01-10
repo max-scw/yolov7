@@ -194,7 +194,7 @@ class LoadImagesAndLabelsWithMasks(LoadImagesAndLabels):  # for training/testing
                     img.shape[1] // self.downsample_ratio
                 ), dtype=np.uint8
             )
-            print(f"DEBUG: no masks. Create black mask: masks.shape={masks.shape}, labels.shape={labels.shape}")
+            # print(f"DEBUG: no masks. Create black mask: masks.shape={masks.shape}, labels.shape={labels.shape}")
 
         if self.augment:
             if self.albumentations is not None:
