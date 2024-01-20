@@ -78,7 +78,7 @@ def create_dataloader(
             kwargs["overlap"] = overlap
             dataset = LoadImagesAndLabelsWithMasks(**kwargs)
         else:
-            kwargs["annotation_type"] = "keypoint" if n_keypoints > 0 else "bbox"
+            kwargs["annotation_type"] = "keypoint" if n_keypoints is not None and n_keypoints > 0 else "bbox"
             dataset = LoadImagesAndLabels(**kwargs)
 
     batch_size = min(batch_size, len(dataset))
@@ -212,19 +212,19 @@ class LoadImagesAndLabelsWithMasks(LoadImagesAndLabels):  # for training/testing
 
             # TODO: add paste_in augmentation
 
-            # Flip up-down
-            if random.random() < hyp["flipud"]:
-                img = np.flipud(img)
-                if n_labels:
-                    labels[:, 2] = 1 - labels[:, 2]
-                    masks = torch.flip(masks, dims=[1])
-
-            # Flip left-right
-            if random.random() < hyp["fliplr"]:
-                img = np.fliplr(img)
-                if n_labels:
-                    labels[:, 1] = 1 - labels[:, 1]
-                    masks = torch.flip(masks, dims=[2])
+            # # Flip up-down
+            # if random.random() < hyp["flipud"]:
+            #     img = np.flipud(img)
+            #     if n_labels:
+            #         labels[:, 2] = 1 - labels[:, 2]
+            #         masks = torch.flip(masks, dims=[1])
+            #
+            # # Flip left-right
+            # if random.random() < hyp["fliplr"]:
+            #     img = np.fliplr(img)
+            #     if n_labels:
+            #         labels[:, 1] = 1 - labels[:, 1]
+            #         masks = torch.flip(masks, dims=[2])
 
             # Cutouts  # labels = cutout(img, labels, p=0.5)
 
