@@ -134,14 +134,22 @@ def test(
 
             # Compute loss
             if compute_loss:
-                loss += compute_loss(train_out, targets, masks=masks)[1][:-1]  # box, obj, cls
+                masks_ = masks.to(device) if isinstance(masks, torch.Tensor) else masks
+                loss += compute_loss(train_out, targets, masks=masks_)[1][:-1]  # box, obj, cls
                 # loss += compute_loss([x for x in train_out], targets, masks=masks)[1][:3]  # box, obj, cls  # FIXME: test with boxes
 
             # Run NMS (on xywh coordintate)
             targets[:, 2:6] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels
             lb = [targets[targets[:, 0] == i, 1:] for i in range(batch_size)] if save_hybrid else []  # for autolabelling
             t = time_synchronized()
-            out = non_max_suppression(out, conf_thres=conf_thres, iou_thres=iou_thres, labels=lb, multi_label=True, n_classes=model.nc)
+            out = non_max_suppression(
+                out,
+                conf_thres=conf_thres,
+                iou_thres=iou_thres,
+                labels=lb,
+                multi_label=True,
+                n_classes=model.n_classes if hasattr(model, "n_classes") else model.nc
+            )
             t1 += time_synchronized() - t
 
         # Statistics per image
@@ -379,6 +387,12 @@ if __name__ == '__main__':
     parser.add_argument('--no-trace', action='store_true', help='don`t trace model')
     parser.add_argument('--v5-metric', action='store_true', help='assume maximum recall as 1.0 in AP calculation')
     opt = parser.parse_args()
+#    opt.weights = "./trained_models/20231220_YOLOv7tiny_CRU_best.pt"
+#    opt.data = ".\data\CRURotorAssembly.yaml"
+#    opt.task = "test"
+#    opt.conf_thres = 0.7
+#    opt.no_trace = True
+
     opt.save_json |= opt.data.endswith('coco.yaml')
     opt.data = check_file(opt.data)  # check file
     print(opt)
