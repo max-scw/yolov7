@@ -8,6 +8,8 @@ from tqdm import tqdm
 
 from utils.general import colorstr
 
+# from matplotlib import pyplot as plt
+
 
 def check_anchor_order(m):
     # Check anchor order against stride order for YOLO Detect() module m, and correct if necessary
@@ -20,11 +22,11 @@ def check_anchor_order(m):
         m.anchor_grid[:] = m.anchor_grid.flip(0)
 
 
-def check_anchors(dataset, model, thr=4.0, imgsz=640):
+def check_anchors(dataset, model, thr: float = 4.0, imgsz: int = 640) -> None:
     # Check anchor fit to data, recompute if necessary
     prefix = colorstr('autoanchor: ')
     print(f'\n{prefix}Analyzing anchors... ', end='')
-    m = model.module.model[-1] if hasattr(model, 'module') else model.model[-1]  # Detect()
+    mdl = model.module.model[-1] if hasattr(model, 'module') else model.model[-1]  # Detect()
     shapes = imgsz * dataset.shapes / dataset.shapes.max(1, keepdims=True)
     scale = np.random.uniform(0.9, 1.1, size=(shapes.shape[0], 1))  # augment scale
     wh = torch.tensor(np.concatenate([l[:, 3:5] * s for s, l in zip(shapes * scale, dataset.labels)])).float()  # wh
@@ -37,29 +39,30 @@ def check_anchors(dataset, model, thr=4.0, imgsz=640):
         bpr = (best > 1. / thr).float().mean()  # best possible recall
         return bpr, aat
 
-    anchors = m.anchor_grid.clone().cpu().view(-1, 2)  # current anchors
+    anchors = mdl.anchor_grid.clone().cpu().view(-1, 2)  # current anchors
     bpr, aat = metric(anchors)
     print(f'anchors/target = {aat:.2f}, Best Possible Recall (BPR) = {bpr:.4f}', end='')
     if bpr < 0.98:  # threshold to recompute
         print('. Attempting to improve anchors, please wait...')
-        na = m.anchor_grid.numel() // 2  # number of anchors
+        n_anchors = mdl.anchor_grid.numel() // 2  # number of anchors
         try:
-            anchors = kmean_anchors(dataset, n=na, img_size=imgsz, thr=thr, gen=1000, verbose=False)
+            # create anchors based on k-means clustering of height/width ratio
+            anchors = kmean_anchors(dataset, n=n_anchors, img_size=imgsz, thr=thr, gen=1000, verbose=False)
         except Exception as e:
             print(f'{prefix}ERROR: {e}')
         new_bpr = metric(anchors)[0]
         if new_bpr > bpr:  # replace anchors
-            anchors = torch.tensor(anchors, device=m.anchors.device).type_as(m.anchors)
-            m.anchor_grid[:] = anchors.clone().view_as(m.anchor_grid)  # for inference
-            check_anchor_order(m)
-            m.anchors[:] = anchors.clone().view_as(m.anchors) / m.stride.to(m.anchors.device).view(-1, 1, 1)  # loss
+            anchors = torch.tensor(anchors, device=mdl.anchors.device).type_as(mdl.anchors)
+            mdl.anchor_grid[:] = anchors.clone().view_as(mdl.anchor_grid)  # for inference
+            check_anchor_order(mdl)
+            mdl.anchors[:] = anchors.clone().view_as(mdl.anchors) / mdl.stride.to(mdl.anchors.device).view(-1, 1, 1)  # loss
             print(f'{prefix}New anchors saved to model. Update model *.yaml to use these anchors in the future.')
         else:
             print(f'{prefix}Original anchors better than new anchors. Proceeding with original anchors.')
     print('')  # newline
 
 
-def kmean_anchors(path='./data/coco.yaml', n=9, img_size=640, thr=4.0, gen=1000, verbose=True):
+def kmean_anchors(path='./data/coco.yaml', n: int = 9, img_size: int = 640, thr: float = 4.0, gen: int = 1000, verbose: bool = True):
     """ Creates kmeans-evolved anchors from training dataset
 
         Arguments:
@@ -79,13 +82,13 @@ def kmean_anchors(path='./data/coco.yaml', n=9, img_size=640, thr=4.0, gen=1000,
     thr = 1. / thr
     prefix = colorstr('autoanchor: ')
 
-    def metric(k, wh):  # compute metrics
+    def metric(k: np.array, wh: torch.Tensor):  # compute metrics
         r = wh[:, None] / k[None]
         x = torch.min(r, 1. / r).min(2)[0]  # ratio metric
         # x = wh_iou(wh, torch.tensor(k))  # iou metric
         return x, x.max(1)[0]  # x, best_x
 
-    def anchor_fitness(k):  # mutation fitness
+    def anchor_fitness(k: np.ndarray):  # mutation fitness
         _, best = metric(torch.tensor(k, dtype=torch.float32), wh)
         return (best * (best > thr).float()).mean()  # fitness
 
@@ -129,7 +132,7 @@ def kmean_anchors(path='./data/coco.yaml', n=9, img_size=640, thr=4.0, gen=1000,
     wh0 = torch.tensor(wh0, dtype=torch.float32)  # unfiltered
     k = print_results(k)
 
-    # Plot
+    # # Plot
     # k, d = [None] * 20, [None] * 20
     # for i in tqdm(range(1, 21)):
     #     k[i-1], d[i-1] = kmeans(wh / s, i)  # points, mean distance
