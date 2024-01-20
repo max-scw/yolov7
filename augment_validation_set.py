@@ -28,8 +28,10 @@ class AugmentFiles:
     def __init__(self,
                  path_to_config_data: Union[str, Path],
                  task: str,
+                 path_to_albumentations_config: Union[str, Path],
                  oversampling: int = 1,
                  augmentation_probability: float = 0.5,
+                 annotation_type="bbox",
                  export_path: Union[str, Path] = "",
                  do_plot: bool = False
                  ):
@@ -41,10 +43,14 @@ class AugmentFiles:
         # load file with validation data (from data config file)
         data = read_text_file(self.path_to_data)
         # cast to pathlib objects
-        self.files = [Path(el.strip("\n")) for el in data if len(el) > 10]
+        self.files = [self.path_to_data.parent / el.strip() for el in data if len(el) > 10]
 
         # set / initialize augmentation
-        self.aug = Albumentations(augment_ogl=False, augmentation_probability=augmentation_probability)
+        self.aug = Albumentations(
+            config_file=path_to_albumentations_config,
+            p=augmentation_probability,
+            annotation_type=annotation_type
+        )
 
         # prepare export
         if not export_path:
@@ -103,7 +109,7 @@ class AugmentFiles:
 
             for i in range(self.oversampling):
                 # augment image + labels
-                img_augmented, labels_augmented = self.aug(img, xyxy)
+                img_augmented, labels_augmented, mask_augmented = self.aug(img, xyxy)
                 # img_augmented, labels_augmented = img, xyxy
                 labels_augmented_xywh = np.hstack(
                     (labels_augmented[..., 0].reshape(-1, 1), xyxy2xywh(labels_augmented[..., 1:])))
@@ -139,13 +145,12 @@ class AugmentFiles:
 
 
 if __name__ == "__main__":
-    # path_to_config_data = Path("data/CNN4VIAB.yaml")
-    # augmentation_probability = 0.5
-    # do_plot = False
-    # task = "val"
 
-    AugmentFiles(path_to_config_data="data/CNN4VIAB.yaml",
-                 task="val",
-                 augmentation_probability=0.5,
-                 do_plot=False
-                 ).augment_files()
+    AugmentFiles(
+        path_to_config_data="data/VIAB1.yaml",
+        task="val",
+        path_to_albumentations_config="data/augmentation-VIAB.yaml",
+        augmentation_probability=0.2,
+        oversampling=2,
+        do_plot=False
+    ).augment_files()
