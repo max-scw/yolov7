@@ -344,11 +344,12 @@ def revert_sync_batchnorm(module):
 class TracedModel(nn.Module):
 
     def __init__(self, model=None, device=None, img_size=(640, 640)):
-        super(TracedModel, self).__init__()
+        super().__init__()
         
         print(" Convert model to Traced-model... ") 
         self.stride = model.stride
         self.names = model.names
+        self.n_classes = model.n_classes if hasattr(model, "n_classes") else model.nc
         self.model = model
 
         self.model = revert_sync_batchnorm(self.model)
