@@ -168,7 +168,7 @@ def create_examples(
     export_dir = Path(export_dir)
 
     # apply transform
-    n_col = max((int(round(oversampling / (16 / 9))), 1))
+    n_col = max((int(round(np.sqrt(oversampling * (16 / 9)))), 1))
     for p2img in images:
         # read image
         img = cv.imread(p2img.as_posix(), cv.IMREAD_COLOR)
@@ -208,11 +208,11 @@ def create_examples(
 
 
 if __name__ == "__main__":
-    build_augmentation_pipeline("../data/augmentation-yolov7.yaml")
+    # build_augmentation_pipeline("../data/augmentation-yolov7.yaml")
 
     create_examples(
-        config_file="../data/augmentation-CRU.yaml",
-        image_dir=r"C:\Users\schwmax\Downloads\NewImages\231205_020556_0000000010_CAM1_NORMAL_OK.bmp",
+        config_file="../data/augmentation-VIAB.yaml",
+        image_dir=r"../dataset/VIAB2/img/230516_082343_0000000214_CAM1_NORMAL_OK.bmp",
         export_dir="export",
-        oversampling=10
+        oversampling=20
     )
