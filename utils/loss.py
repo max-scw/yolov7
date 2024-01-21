@@ -7,7 +7,7 @@ from torch.nn.functional import one_hot, binary_cross_entropy_with_logits
 from utils.general import bbox_iou, bbox_alpha_iou, box_iou, box_giou, box_diou, box_ciou, xywh2xyxy, crop_masks
 from utils.torch_utils import is_parallel
 
-from typing import List, Union, Dict
+from typing import List, Union, Dict, Tuple
 import numpy as np
 
 def smooth_BCE(eps=0.1):  # https://github.com/ultralytics/yolov3/issues/238#issuecomment-598028441
@@ -460,14 +460,14 @@ class ComputeLoss:
     def __call__(self, predictions, targets: torch.Tensor, masks=None):  # predictions, targets, model
         predictions_, proto = self._format_predictions(predictions)
 
-        n_anchors = len(self.anchors)  # == self.n_layers == len(predictions_)
+        # n_anchors = len(self.anchors)  # == self.n_layers == len(predictions_)
 
         indices = self.find_n_positive(predictions_, targets)
         split_targets = self.group_targets(indices, predictions_, targets)
         anchors = self.group_anchors(indices)
         xywh = self.group_xywh(indices, targets)
 
-        return self._calulate_loss(
+        return self._calculate_loss(
             predictions_,
             split_targets,
             proto=proto,
@@ -478,7 +478,7 @@ class ComputeLoss:
             device=targets.device
         )
 
-    def _calulate_loss(
+    def _calculate_loss(
             self,
             predictions_: List[torch.Tensor],
             split_targets: Dict[str, List[torch.Tensor]],
@@ -487,8 +487,20 @@ class ComputeLoss:
             indices: Dict[str, List[torch.Tensor]],
             anchors: List[torch.Tensor],
             xywh_norm,
-            device="cpu"
-    ):
+            device: Union[str, int] = "cpu"
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+
+        :param predictions_:
+        :param split_targets:
+        :param proto:
+        :param masks:
+        :param indices:
+        :param anchors:
+        :param xywh_norm:
+        :param device: GPU number or string "CPU"
+        :return: total loss, sensor with distinct losses
+        """
         # initialize losses (classes, bounding boxes, objectness)
         loss_types = ["cls", "box", "obj", "add"]
         losses: Dict[str, torch.Tensor] = {ky: torch.zeros(1, device=device) for ky in loss_types}
@@ -543,6 +555,7 @@ class ComputeLoss:
                         if self.overlap:
                             gt_mask_i = torch.where(masks[bi][None] == split_targets["idx"][i][j].view(-1, 1, 1), 1.0, 0.0)
                         else:
+                            # print(f"DEBUG: devices masks={masks.get_device()}, split_targets['idx'][i]={split_targets['idx'][i].get_device()}, j={j.get_device()}")
                             gt_mask_i = masks[split_targets["idx"][i]][j]
 
                         losses["add"] += self.single_mask_loss(gt_mask_i, prd_add[j], proto[bi], mxyxy[j], mask_area[j])
@@ -596,7 +609,7 @@ class ComputeLoss:
         self.target_type = target_type
         self.n_add = n_add
 
-        # check fornat
+        # check format
         sz_label = predictions_[0].shape[-1]
         msg = "Unexpected shape of the predictions. Expecting {} entries for {} but the shape of the label was {}."
         if self.target_type == "bbox":
@@ -615,7 +628,16 @@ class ComputeLoss:
             proto: torch.Tensor,  # shape: (n_prototypes?, mask_height, mask_width)
             xyxy: torch.Tensor,  # shape: (batch_size?, batch_size?)
             area: torch.Tensor  # shape: (batch_size?,)
-    ):
+    ) -> torch.Tensor:
+        """
+        Regression loss between two masks (binary images/tensors)
+        :param gt_mask: ground truth masks
+        :param pred:
+        :param proto:
+        :param xyxy:
+        :param area:
+        :return: single number as combined loss (mean of per area scaled loss)
+        """
         # Mask loss for one image
         pred_mask = (pred @ proto.view(self.n_add, -1)).view(-1, *proto.shape[1:])  # (n,32) @ (32,80,80) -> (n,80,80)  # n_masks = nm in original code
         loss = nn.functional.binary_cross_entropy_with_logits(pred_mask, gt_mask, reduction="none")
@@ -739,11 +761,11 @@ class ComputeLoss:
                 gxi = gain[idx_t["xy"]] - gxy  # inverse
                 j, k = ((gxy % 1. < g) & (gxy > 1.)).T
                 l, m = ((gxi % 1. < g) & (gxi > 1.)).T
-                j = torch.stack((torch.ones_like(j), j, k, l, m))
+                j = torch.stack((torch.ones_like(j, device=device), j, k, l, m))
                 # j = torch.stack((torch.ones_like(jk[0], device=device), *[el for el in jk], *[el for el in lm]))  # !!
                 # assert j.shape[0] == (sz_label - 1)
                 t = t.repeat((j.shape[0], 1, 1))[j]
-                offsets = (torch.zeros_like(gxy)[None] + off[:, None])[j]
+                offsets = (torch.zeros_like(gxy, device=device)[None] + off[:, None])[j]
 
             else:
                 # no targets
@@ -752,10 +774,10 @@ class ComputeLoss:
 
             # Define
             batch = t[:, idx_t["batch"]].long()
-            cls = t[:, idx_t["cls"]].long()
+            # cls = t[:, idx_t["cls"]].long()
             gxy = t[:, idx_t["xy"]]  # grid xy
-            gwh = t[:, idx_t["wh"]]  # grid wh
-            add_pts = t[:, idx_t["add"]]
+            # gwh = t[:, idx_t["wh"]]  # grid wh
+            # add_pts = t[:, idx_t["add"]]
             # slice anchor and target indices
             idx_anchor = t[:, idx_t["anchor_idx"]].long()
             idx_target = t[:, idx_t["target_idx"]].long()
@@ -943,9 +965,9 @@ class ComputeLoss:
                 gxi = gain[idx_t["xy"]] - gxy  # inverse
                 j, k = ((gxy % 1. < g) & (gxy > 1.)).T
                 l, m = ((gxi % 1. < g) & (gxi > 1.)).T
-                j = torch.stack((torch.ones_like(j), j, k, l, m))
+                j = torch.stack((torch.ones_like(j, device=device), j, k, l, m))
                 t = t.repeat((j.shape[0], 1, 1))[j]  # was 5  (5, 1, 1)
-                offsets = (torch.zeros_like(gxy)[None] + off[:, None])[j]
+                offsets = (torch.zeros_like(gxy, device=device)[None] + off[:, None])[j]
             else:
                 # no targets
                 t = targets[0]
@@ -989,17 +1011,17 @@ class ComputeLossOTA(ComputeLoss):
     def __init__(self, model, autobalance: bool = False):
         super().__init__(model, autobalance, overlap=False)
         device = next(model.parameters()).device  # get model device
-        h = model.hyp  # hyperparameters
+        hyp = model.hyp  # hyperparameters
 
         # Define criteria: binary cross-entropy with logits loss for classes and object
-        BCEcls = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([h['cls_pw']], device=device))
-        BCEobj = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([h['obj_pw']], device=device))
+        BCEcls = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([hyp['cls_pw']], device=device))
+        BCEobj = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([hyp['obj_pw']], device=device))
 
         # Class label smoothing https://arxiv.org/pdf/1902.04103.pdf eqn 3
-        self.cp, self.cn = smooth_BCE(eps=h.get('label_smoothing', 0.0))  # positive, negative BCE targets
+        self.cp, self.cn = smooth_BCE(eps=hyp.get('label_smoothing', 0.0))  # positive, negative BCE targets
 
         # Focal loss
-        g = h['fl_gamma']  # focal loss gamma
+        g = hyp['fl_gamma']  # focal loss gamma
         if g > 0:
             BCEcls, BCEobj = FocalLoss(BCEcls, g), FocalLoss(BCEobj, g)
 
@@ -1009,7 +1031,7 @@ class ComputeLossOTA(ComputeLoss):
         self.BCEcls = BCEcls
         self.BCEobj = BCEobj
         self.gr = model.gr
-        self.hyp = h
+        self.hyp = hyp
         self.autobalance = autobalance
         for ky in ['n_anchors', 'n_classes', 'n_layers', 'anchors', 'stride']:
             setattr(self, ky, getattr(det, ky))
@@ -1029,7 +1051,7 @@ class ComputeLossOTA(ComputeLoss):
         new_split_targets = self.group_targets(new_indices, predictions_, targets)
         new_xywh_norm = self.group_xywh(new_indices, targets)
 
-        return self._calulate_loss(
+        return self._calculate_loss(
             predictions_,
             new_split_targets,
             proto=proto,
@@ -1097,7 +1119,7 @@ class ComputeLossOTA(ComputeLoss):
                 gj = all_elements["grid_j"][i]
                 gi = all_elements["grid_i"][i]
 
-                from_which_layer.append(torch.ones(size=(len(b), )) * i)
+                from_which_layer.append(torch.ones(size=(len(b), ), device=device) * i)
 
                 fg_pred = prd_i[b, a, gj, gi]
                 # indices for prediction
@@ -1133,7 +1155,7 @@ class ComputeLossOTA(ComputeLoss):
 
             # number of classes
             # shape: (number of targets, number of predictions, number of classes)
-            gt_cls_per_image = one_hot(this_target[:, 1].to(torch.int64), self.n_classes).float().unsqueeze(1).repeat(1, pxyxys.shape[0], 1)
+            gt_cls_per_image = one_hot(this_target[:, 1].long(), self.n_classes).float().unsqueeze(1).repeat(1, pxyxys.shape[0], 1)
 
             num_gt = this_target.shape[0]
             cls_preds_ = prds["cls"].float().unsqueeze(0).repeat(num_gt, 1, 1).sigmoid_() * prds["obj"].unsqueeze(0).repeat(num_gt, 1, 1).sigmoid_()
@@ -1241,7 +1263,7 @@ class ComputeLossOTA(ComputeLoss):
                 gj = all_elements["grid_j"][i]
                 gi = all_elements["grid_i"][i]
 
-                from_which_layer.append(torch.ones(size=(len(b),), device=device) * i)
+                from_which_layer.append(torch.ones(size=(len(b), ), device=device) * i)
 
                 fg_pred = prd_i[b, a, gj, gi]
                 # indices for prediction
@@ -1324,12 +1346,10 @@ class ComputeLossOTA(ComputeLoss):
                 # matching["target_elements"][i].append(this_target[layer_idx])
 
         for i in range(self.n_layers):
-            layer_idx = from_which_layer == i
-            if this_target[layer_idx] != []:
-                for ky in matching:
+            for ky in matching:
+                if matching[ky][i] != []:
                     matching[ky][i] = torch.cat(matching[ky][i], dim=0)
-            else:
-                for ky in matching:
+                else:
                     matching[ky][i] = torch.tensor([], device=device, dtype=torch.int64)
 
         new_indices = {ky: matching[ky] for ky in indices.keys()}
