@@ -386,6 +386,8 @@ if __name__ == '__main__':
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
     parser.add_argument('--no-trace', action='store_true', help='don`t trace model')
     parser.add_argument('--v5-metric', action='store_true', help='assume maximum recall as 1.0 in AP calculation')
+    parser.add_argument('--plot', action='store_true', help='Plot predictions on images')
+
     opt = parser.parse_args()
 #    opt.weights = "./trained_models/20231220_YOLOv7tiny_CRU_best.pt"
 #    opt.data = ".\data\CRURotorAssembly.yaml"
@@ -414,7 +416,8 @@ if __name__ == '__main__':
              save_hybrid=opt.save_hybrid,
              save_conf=opt.save_conf,
              trace=not opt.no_trace,
-             v5_metric=opt.v5_metric
+             v5_metric=opt.v5_metric,
+             plots=opt.plot
              )
 
     elif opt.task == 'speed':  # speed benchmarks
