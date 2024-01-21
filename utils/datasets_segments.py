@@ -290,7 +290,7 @@ class LoadImagesAndLabelsWithMasks(LoadImagesAndLabels):  # for training/testing
         # img4, labels4 = replicate(img4, labels4)  # replicate
 
         # Augment
-        img4, labels4, segments4 = copy_paste(img4, labels4, segments4, p=self.hyp["copy_paste"])
+        img4, labels4, segments4 = copy_paste(img4, labels4, segments4, probability=self.hyp["copy_paste"])
         img4, labels4, segments4 = segaug.random_perspective(
             img4,
             labels4,

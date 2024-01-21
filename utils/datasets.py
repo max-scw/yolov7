@@ -734,18 +734,18 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         if n_labels:
             labels = self.transform_to_relative_coordinates(labels, w=img.shape[0], h=img.shape[1])
 
-        if self.augment:
-            # flip up-down
-            if random.random() < hyp['flipud']:
-                img = np.flipud(img)
-                if n_labels:
-                    labels[:, 2] = 1 - labels[:, 2]
-
-            # flip left-right
-            if random.random() < hyp['fliplr']:
-                img = np.fliplr(img)
-                if n_labels:
-                    labels[:, 1] = 1 - labels[:, 1]
+        # if self.augment:  # ALBUMENTATIONS
+        #     # flip up-down
+        #     if random.random() < hyp['flipud']:
+        #         img = np.flipud(img)
+        #         if n_labels:
+        #             labels[:, 2] = 1 - labels[:, 2]
+        #
+        #     # flip left-right
+        #     if random.random() < hyp['fliplr']:
+        #         img = np.fliplr(img)
+        #         if n_labels:
+        #             labels[:, 1] = 1 - labels[:, 1]
 
         labels_out = torch.zeros((n_labels, self.sz_label + 1))  # +1 to add batch number (as prefix)
         if n_labels:

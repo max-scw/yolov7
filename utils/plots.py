@@ -427,13 +427,16 @@ def plot_labels(labels, names=(), save_dir=Path(''), loggers=None):
             v.log({"Labels": [v.Image(str(x), caption=x.name) for x in save_dir.glob('*labels*.jpg')]}, commit=False)
 
 
-def plot_evolution(yaml_file='data/hyp.finetune.yaml',
-                   filename: str = "evolve.txt",
-                   keys: List[Union[str, Any]] = None
-                   ):  # from utils.plots import *; plot_evolution()
+def plot_evolution(
+        yaml_file='data/hyp.finetune.yaml',
+        filename: str = "evolve.txt",
+        keys: List[Union[str, Any]] = None
+) -> None:  # from utils.plots import *; plot_evolution()
+
     # Plot hyperparameter evolution results in evolve.txt
-    with open(yaml_file) as f:
-        hyp = yaml.load(f, Loader=yaml.SafeLoader)
+    with open(yaml_file) as fid:
+        hyp = yaml.load(fid, Loader=yaml.SafeLoader)
+
     x = np.loadtxt(filename, ndmin=2)
     f = fitness(x)
     # weights = (f - f.min()) ** 2  # for weighted results
@@ -443,6 +446,7 @@ def plot_evolution(yaml_file='data/hyp.finetune.yaml',
         hyp2plot = hyp
     else:
         hyp2plot = {ky: hyp[ky] for ky in keys}
+
     for i, (k, v) in enumerate(hyp2plot.items()):
         y = x[:, i + 7]
         # mu = (y * weights).sum() / weights.sum()  # best weighted result
@@ -454,6 +458,7 @@ def plot_evolution(yaml_file='data/hyp.finetune.yaml',
         if i % 5 != 0:
             plt.yticks([])
         print('%15s: %.3g' % (k, mu))
+
     filename = Path(filename).with_suffix('.png')
     plt.savefig(filename, dpi=200)
     print(f'\nPlot saved as {filename.as_posix()}')

@@ -40,6 +40,7 @@ from utils.torch_utils import ModelEMA, select_device, intersect_dicts, torch_di
 from utils.debugging import print_debug_msg
 
 import warnings
+
 warnings.filterwarnings(
     "ignore",
     category=UserWarning,
@@ -141,62 +142,61 @@ def train(hyp, opt, device, tb_writer=None):
         elif hasattr(v, 'weight') and isinstance(v.weight, nn.Parameter):
             pg1.append(v.weight)  # apply decay
         if hasattr(v, 'im'):
-            if hasattr(v.im, 'implicit'):           
+            if hasattr(v.im, 'implicit'):
                 pg0.append(v.im.implicit)
             else:
                 for iv in v.im:
                     pg0.append(iv.implicit)
         if hasattr(v, 'imc'):
-            if hasattr(v.imc, 'implicit'):           
+            if hasattr(v.imc, 'implicit'):
                 pg0.append(v.imc.implicit)
             else:
                 for iv in v.imc:
                     pg0.append(iv.implicit)
         if hasattr(v, 'imb'):
-            if hasattr(v.imb, 'implicit'):           
+            if hasattr(v.imb, 'implicit'):
                 pg0.append(v.imb.implicit)
             else:
                 for iv in v.imb:
                     pg0.append(iv.implicit)
         if hasattr(v, 'imo'):
-            if hasattr(v.imo, 'implicit'):           
+            if hasattr(v.imo, 'implicit'):
                 pg0.append(v.imo.implicit)
             else:
                 for iv in v.imo:
                     pg0.append(iv.implicit)
         if hasattr(v, 'ia'):
-            if hasattr(v.ia, 'implicit'):           
+            if hasattr(v.ia, 'implicit'):
                 pg0.append(v.ia.implicit)
             else:
                 for iv in v.ia:
                     pg0.append(iv.implicit)
         if hasattr(v, 'attn'):
-            if hasattr(v.attn, 'logit_scale'):   
+            if hasattr(v.attn, 'logit_scale'):
                 pg0.append(v.attn.logit_scale)
-            if hasattr(v.attn, 'q_bias'):   
+            if hasattr(v.attn, 'q_bias'):
                 pg0.append(v.attn.q_bias)
-            if hasattr(v.attn, 'v_bias'):  
+            if hasattr(v.attn, 'v_bias'):
                 pg0.append(v.attn.v_bias)
-            if hasattr(v.attn, 'relative_position_bias_table'):  
+            if hasattr(v.attn, 'relative_position_bias_table'):
                 pg0.append(v.attn.relative_position_bias_table)
         if hasattr(v, 'rbr_dense'):
-            if hasattr(v.rbr_dense, 'weight_rbr_origin'):  
+            if hasattr(v.rbr_dense, 'weight_rbr_origin'):
                 pg0.append(v.rbr_dense.weight_rbr_origin)
-            if hasattr(v.rbr_dense, 'weight_rbr_avg_conv'): 
+            if hasattr(v.rbr_dense, 'weight_rbr_avg_conv'):
                 pg0.append(v.rbr_dense.weight_rbr_avg_conv)
-            if hasattr(v.rbr_dense, 'weight_rbr_pfir_conv'):  
+            if hasattr(v.rbr_dense, 'weight_rbr_pfir_conv'):
                 pg0.append(v.rbr_dense.weight_rbr_pfir_conv)
-            if hasattr(v.rbr_dense, 'weight_rbr_1x1_kxk_idconv1'): 
+            if hasattr(v.rbr_dense, 'weight_rbr_1x1_kxk_idconv1'):
                 pg0.append(v.rbr_dense.weight_rbr_1x1_kxk_idconv1)
-            if hasattr(v.rbr_dense, 'weight_rbr_1x1_kxk_conv2'):   
+            if hasattr(v.rbr_dense, 'weight_rbr_1x1_kxk_conv2'):
                 pg0.append(v.rbr_dense.weight_rbr_1x1_kxk_conv2)
-            if hasattr(v.rbr_dense, 'weight_rbr_gconv_dw'):   
+            if hasattr(v.rbr_dense, 'weight_rbr_gconv_dw'):
                 pg0.append(v.rbr_dense.weight_rbr_gconv_dw)
-            if hasattr(v.rbr_dense, 'weight_rbr_gconv_pw'):   
+            if hasattr(v.rbr_dense, 'weight_rbr_gconv_pw'):
                 pg0.append(v.rbr_dense.weight_rbr_gconv_pw)
-            if hasattr(v.rbr_dense, 'vector'):   
+            if hasattr(v.rbr_dense, 'vector'):
                 pg0.append(v.rbr_dense.vector)
-
 
     if opt.adam:
         optimizer = optim.Adam(pg0, lr=hyp['lr0'], betas=(hyp['momentum'], 0.999))  # adjust beta1 to momentum
@@ -288,7 +288,8 @@ def train(hyp, opt, device, tb_writer=None):
     )
     mlc = np.concatenate(dataset.labels, 0)[:, 0].max()  # max label class
     n_batches = len(dataloader)  # number of batches
-    assert mlc < n_classes, 'Label class %g exceeds nc=%g in %s. Possible class labels are 0-%g' % (mlc, n_classes, opt.data, n_classes - 1)
+    assert mlc < n_classes, 'Label class %g exceeds nc=%g in %s. Possible class labels are 0-%g' % (
+    mlc, n_classes, opt.data, n_classes - 1)
 
     # Process 0
     if rank in [-1, 0]:
@@ -313,9 +314,10 @@ def train(hyp, opt, device, tb_writer=None):
             # cf = torch.bincount(c.long(), minlength=nc) + 1.  # frequency
             # model._initialize_biases(cf.to(device))
             if plots:
-                #plot_labels(labels, names, save_dir, loggers)
+                # plot_labels(labels, names, save_dir, loggers)
                 if tb_writer:
-                    print_debug_msg(f"tb_writer.add_histogram('classes', c, 0):tb_writer.add_histogram('classes', {c}, 0)")
+                    print_debug_msg(
+                        f"tb_writer.add_histogram('classes', c, 0):tb_writer.add_histogram('classes', {c}, 0)")
                     tb_writer.add_histogram('classes', c, 0)
 
             # Anchors
@@ -331,7 +333,8 @@ def train(hyp, opt, device, tb_writer=None):
 
     # Model parameters
     hyp['box'] *= 3. / n_detection_layers  # scale to layers
-    hyp['cls'] *= n_classes / 80. * 3. / n_detection_layers  # scale to classes and layers  # INFO: 80 is the number of classes in COCO
+    hyp[
+        'cls'] *= n_classes / 80. * 3. / n_detection_layers  # scale to classes and layers  # INFO: 80 is the number of classes in COCO
     hyp['obj'] *= (imgsz / 640) ** 2 * 3. / n_detection_layers  # scale to image size and layers
     # if 'kpt' in hyp:
     #     hyp['kpt'] *= 3. / nl / n_kpt # scale to layers and number of keypoints  # TODO: add hyp['kpt'] scaling
@@ -339,12 +342,14 @@ def train(hyp, opt, device, tb_writer=None):
     model.nc = n_classes  # attach number of classes to model
     model.hyp = hyp  # attach hyperparameters to model
     model.gr = 1.0  # iou loss ratio (obj_loss = 1.0 or iou)
-    model.class_weights = labels_to_class_weights(dataset.labels, n_classes).to(device) * n_classes  # attach class weights
+    model.class_weights = labels_to_class_weights(dataset.labels, n_classes).to(
+        device) * n_classes  # attach class weights
     model.names = names
 
     # Start training
     t0 = time.time()
-    n_warmup_iterations = max(round(hyp['warmup_epochs'] * n_batches), 1000)  # number of warmup iterations, max(3 epochs, 1k iterations)
+    n_warmup_iterations = max(round(hyp['warmup_epochs'] * n_batches),
+                              1000)  # number of warmup iterations, max(3 epochs, 1k iterations)
     # nw = min(nw, (epochs - start_epoch) / 2 * nb)  # limit warmup to < 1/2 of training
     maps = np.zeros(n_classes)  # mAP per class
     results = (0, 0, 0, 0, 0, 0, 0)  # P, R, mAP@.5, mAP@.5-.95, val_loss(box, obj, cls)
@@ -385,12 +390,14 @@ def train(hyp, opt, device, tb_writer=None):
         if rank != -1:
             dataloader.sampler.set_epoch(epoch)
         pbar = enumerate(dataloader)
-        logger.info(('\n' + '%10s' * 9) % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls', 'add', 'total', 'labels', 'img_size'))
+        logger.info(
+            ('\n' + '%10s' * 9) % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls', 'add', 'total', 'labels', 'img_size'))
         if rank in [-1, 0]:
             pbar = tqdm(pbar, total=n_batches)  # progress bar
         optimizer.zero_grad()
 
-        for i, (imgs, targets, paths, _, masks) in pbar:  # batch -------------------------------------------------------------
+        for i, (
+        imgs, targets, paths, _, masks) in pbar:  # batch -------------------------------------------------------------
             if opt.export_training_images and Path(opt.export_training_images).is_dir():
                 path_to_export = Path(opt.export_training_images) / opt.name
                 if not path_to_export.is_dir():
@@ -405,7 +412,7 @@ def train(hyp, opt, device, tb_writer=None):
                     targets,
                     fname=p2fl.as_posix(),
                     max_subplots=opt.batch_size,
-                    aspect_ratio=16/9,
+                    aspect_ratio=16 / 9,
                     masks=masks
                 )
 
@@ -416,10 +423,12 @@ def train(hyp, opt, device, tb_writer=None):
             if n_integrated_batches <= n_warmup_iterations:
                 xi = [0, n_warmup_iterations]  # x interp
                 # model.gr = np.interp(ni, xi, [0.0, 1.0])  # iou loss ratio (obj_loss = 1.0 or iou)
-                accumulate = max(1, np.interp(n_integrated_batches, xi, [1, batch_size_nominal / total_batch_size]).round())
+                accumulate = max(1, np.interp(n_integrated_batches, xi,
+                                              [1, batch_size_nominal / total_batch_size]).round())
                 for j, x in enumerate(optimizer.param_groups):
                     # bias lr falls from 0.1 to lr0, all other lrs rise from 0.0 to lr0
-                    x['lr'] = np.interp(n_integrated_batches, xi, [hyp['warmup_bias_lr'] if j == 2 else 0.0, x['initial_lr'] * lf(epoch)])
+                    x['lr'] = np.interp(n_integrated_batches, xi,
+                                        [hyp['warmup_bias_lr'] if j == 2 else 0.0, x['initial_lr'] * lf(epoch)])
                     if 'momentum' in x:
                         x['momentum'] = np.interp(n_integrated_batches, xi, [hyp['warmup_momentum'], hyp['momentum']])
 
@@ -449,7 +458,7 @@ def train(hyp, opt, device, tb_writer=None):
                     loss, loss_items = compute_loss(
                         pred,
                         targets.to(device),
-                        masks=masks_    # ground truth mask
+                        masks=masks_  # ground truth mask
                     )  # loss scaled by batch_size
 
                 if rank != -1:
@@ -473,7 +482,8 @@ def train(hyp, opt, device, tb_writer=None):
                 mloss = (mloss * i + loss_items) / (i + 1)  # update mean losses
                 mem = '%.3gG' % (torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0)  # (GB)
                 info_str = ('%10s' * 2 + '%10.4g' * 7) % (
-                    '%g/%g' % (epoch, epochs - 1), mem, *mloss, targets.shape[0], imgs.shape[-1])
+                    '%g/%g' % (epoch, epochs - 1), mem, *mloss, targets.shape[0], imgs.shape[-1]
+                )
                 pbar.set_description(info_str)
 
                 # Plot
@@ -522,7 +532,8 @@ def train(hyp, opt, device, tb_writer=None):
                 os.system('gsutil cp %s gs://%s/results/results%s.txt' % (results_file, opt.bucket, opt.name))
 
             # Log
-            tags = ['train/box_loss', 'train/obj_loss', 'train/cls_loss', 'train/add_loss', # train loss  # TODO train/msk_loss
+            tags = ['train/box_loss', 'train/obj_loss', 'train/cls_loss', 'train/add_loss',
+                    # train loss  # TODO train/msk_loss
                     'metrics/precision', 'metrics/recall', 'metrics/mAP_0.5', 'metrics/mAP_0.5:0.95',
                     'val/box_loss', 'val/obj_loss', 'val/cls_loss',  # val loss
                     'x/lr0', 'x/lr1', 'x/lr2']  # params
@@ -592,7 +603,7 @@ def train(hyp, opt, device, tb_writer=None):
                     batch_size=batch_size * 2,
                     imgsz=imgsz_test,
                     conf_thres=0.001,
-                    iou_thres=0.7,
+                    iou_thres=0.7,  # FIXME: loss-function ignores IoU => make zero! or adjust loss function
                     model=attempt_load(m, device).half(),
                     single_cls=opt.single_cls,
                     dataloader=testloader,
@@ -631,7 +642,8 @@ if __name__ == '__main__':
     parser.add_argument('--notest', action='store_true', help='only test final epoch')
     parser.add_argument('--noautoanchor', action='store_true', help='disable autoanchor check')
     parser.add_argument('--evolve', action='store_true', help='evolve hyperparameters')
-    parser.add_argument('--evolve-generations', type=int, default=300, help='how many generations / iterations to evolve hyperparameters')
+    parser.add_argument('--evolve-generations', type=int, default=300,
+                        help='how many generations / iterations to evolve hyperparameters')
     parser.add_argument('--bucket', type=str, default='', help='gsutil bucket')
     parser.add_argument('--cache-images', action='store_true', help='cache images for faster training')
     parser.add_argument('--image-weights', action='store_true', help='use weighted image selection for training')
@@ -674,7 +686,7 @@ if __name__ == '__main__':
     opt.world_size = int(os.environ['WORLD_SIZE']) if 'WORLD_SIZE' in os.environ else 1
     opt.global_rank = int(os.environ['RANK']) if 'RANK' in os.environ else -1
     set_logging(opt.global_rank)
-    #if opt.global_rank in [-1, 0]:
+    # if opt.global_rank in [-1, 0]:
     #    check_git_status()
     #    check_requirements()
     for arg, value in sorted(vars(opt).items()):
@@ -727,43 +739,45 @@ if __name__ == '__main__':
     else:
         path_to_evolve_notes = Path(opt.name).with_suffix(".txt")
         # Hyperparameter evolution metadata (mutation scale 0-1, lower_limit, upper_limit)
-        meta = {'lr0': (1, 1e-5, 1e-1),  # initial learning rate (SGD=1E-2, Adam=1E-3)
-                'lrf': (1, 0.01, 1.0),  # final OneCycleLR learning rate (lr0 * lrf)
-                'momentum': (0.3, 0.6, 0.98),  # SGD momentum/Adam beta1
-                'weight_decay': (1, 0.0, 0.001),  # optimizer weight decay
-                'warmup_epochs': (1, 0.0, 5.0),  # warmup epochs (fractions ok)
-                'warmup_momentum': (1, 0.0, 0.95),  # warmup initial momentum
-                'warmup_bias_lr': (1, 0.0, 0.2),  # warmup initial bias lr
-                'box': (1, 0.02, 0.2),  # box loss gain
-                'cls': (1, 0.2, 4.0),  # cls loss gain
-                'cls_pw': (1, 0.5, 2.0),  # cls BCELoss positive_weight
-                'obj': (1, 0.2, 4.0),  # obj loss gain (scale with pixels)
-                'obj_pw': (1, 0.5, 2.0),  # obj BCELoss positive_weight
-                'iou_t': (0, 0.1, 0.7),  # IoU training threshold
-                'anchor_t': (1, 2.0, 8.0),  # anchor-multiple threshold
-                'anchors': (2, 2.0, 10.0),  # anchors per output grid (0 to ignore)
-                'fl_gamma': (0, 0.0, 2.0),  # focal loss gamma (efficientDet default gamma=1.5)
-                'hsv_h': (1, 0.0, 0.1),  # image HSV-Hue augmentation (fraction)
-                'hsv_s': (1, 0.0, 0.9),  # image HSV-Saturation augmentation (fraction)
-                'hsv_v': (1, 0.0, 0.9),  # image HSV-Value augmentation (fraction)
-                'degrees': (1, 0.0, 45.0),  # image rotation (+/- deg)
-                'translate': (1, 0.0, 0.9),  # image translation (+/- fraction)
-                'scale': (1, 0.0, 0.9),  # image scale (+/- gain)
-                'shear': (1, 0.0, 10.0),  # image shear (+/- deg)
-                'perspective': (0, 0.0, 0.001),  # image perspective (+/- fraction), range 0-0.001
-                'flipud': (1, 0.0, 1.0),  # image flip up-down (probability)
-                'fliplr': (0, 0.0, 1.0),  # image flip left-right (probability)
-                'mosaic': (1, 0.0, 1.0),  # image mixup (probability)
-                'mixup': (1, 0.0, 1.0),   # image mixup (probability)
-                'copy_paste': (1, 0.0, 1.0),  # segment copy-paste (probability)
-                'paste_in': (1, 0.0, 1.0)    # segment copy-paste (probability)
-                }
-        
-        with open(opt.hyp, errors='ignore') as f:
-            hyp = yaml.safe_load(f)  # load hyps dict
+        meta = {
+            'lr0': (1, 1e-5, 1e-1),  # initial learning rate (SGD=1E-2, Adam=1E-3)
+            'lrf': (1, 0.01, 1.0),  # final OneCycleLR learning rate (lr0 * lrf)
+            'momentum': (0.3, 0.6, 0.98),  # SGD momentum/Adam beta1
+            'weight_decay': (1, 0.0, 0.001),  # optimizer weight decay
+            'warmup_epochs': (1, 0.0, 5.0),  # warmup epochs (fractions ok)
+            'warmup_momentum': (1, 0.0, 0.95),  # warmup initial momentum
+            'warmup_bias_lr': (1, 0.0, 0.2),  # warmup initial bias lr
+            'box': (1, 0.02, 0.5),  # box loss gain
+            'cls': (1, 0.2, 4.0),  # cls loss gain
+            'cls_pw': (1, 0.5, 2.0),  # cls BCELoss positive_weight
+            'obj': (1, 0.2, 4.0),  # obj loss gain (scale with pixels)
+            'obj_pw': (1, 0.5, 2.0),  # obj BCELoss positive_weight
+            # 'iou_t': (0, 0.1, 0.7),  # IoU training threshold
+            'anchor_t': (1, 2.0, 8.0),  # anchor-multiple threshold
+            'anchors': (2, 2.0, 10.0),  # anchors per output grid (0 to ignore)
+            'fl_gamma': (0, 0.0, 2.0),  # focal loss gamma (efficientDet default gamma=1.5)
+            'hsv_h': (1, 0.0, 0.1),  # image HSV-Hue augmentation (fraction)
+            'hsv_s': (1, 0.0, 0.9),  # image HSV-Saturation augmentation (fraction)
+            'hsv_v': (1, 0.0, 0.9),  # image HSV-Value augmentation (fraction)
+            'degrees': (1, 0.0, 45.0),  # image rotation (+/- deg)  | random_perspective()
+            'translate': (1, 0.0, 0.9),  # image translation (+/- fraction)  | random_perspective()
+            'scale': (1, 0.0, 0.9),  # image scale (+/- gain)  | random_perspective()
+            'shear': (1, 0.0, 10.0),  # image shear (+/- deg)  | random_perspective()
+            'perspective': (0, 0.0, 0.001),  # image perspective (+/- fraction), range 0-0.001  | random_perspective()
+            # 'flipud': (1, 0.0, 1.0),  # image flip up-down (probability)
+            # 'fliplr': (0, 0.0, 1.0),  # image flip left-right (probability)
+            'ablumentation_p': (1, 0.02, 0.5),  # probability to apply augmentation transformation from the albumentation package
+            'mosaic': (1, 0.0, 1.0),  # image mixup (probability)
+            'mixup': (1, 0.0, 1.0),  # image mixup (probability)
+            'copy_paste': (1, 0.0, 1.0),  # segment copy-paste (probability)
+            'paste_in': (1, 0.0, 1.0)  # segment copy-paste (probability)
+        }
+
+        with open(opt.hyp, errors='ignore') as fid:
+            hyp = yaml.safe_load(fid)  # load hyps dict
             if 'anchors' not in hyp:  # anchors commented in hyp.yaml
                 hyp['anchors'] = 3
-                
+
         assert opt.local_rank == -1, 'DDP mode not implemented for --evolve'
         opt.notest, opt.nosave = True, True  # only test/save final epoch
         # ei = [isinstance(x, (int, float)) for x in hyp.values()]  # evolvable indices
@@ -772,7 +786,7 @@ if __name__ == '__main__':
             os.system(f'gsutil cp gs://%s/{path_to_evolve_notes.name} .' % opt.bucket)  # download evolve.txt if exists
 
         # number of result values / evaluation values from training function
-        n_result_values = 7
+        n_result_values = 8
         for _ in range(opt.evolve_generations):  # generations to evolve
             if path_to_evolve_notes.exists():
                 # if file exists: select best hyps and mutate
@@ -792,14 +806,14 @@ if __name__ == '__main__':
                     x = (x * w.reshape(n, 1)).sum(0) / w.sum()  # weighted combination
 
                 # Mutate
-                mp, s = 0.8, 0.2  # mutation probability, sigma
+                p_mutation, sigma = 0.8, 0.2  # mutation probability, sigma
                 npr = np.random
                 npr.seed(int(time.time()))
-                g = np.array([x[0] for x in meta.values()])  # gains 0-1
+                gain = np.array([x[0] for x in meta.values()])  # gains 0-1
                 ng = len(meta)
                 v = np.ones(ng)
                 while all(v == 1):  # mutate until a change occurs (prevent duplicates)
-                    v = (g * (npr.random(ng) < mp) * npr.randn(ng) * npr.random() * s + 1).clip(0.3, 3.0)
+                    v = (gain * (npr.random(ng) < p_mutation) * npr.randn(ng) * npr.random() * sigma + 1).clip(0.3, 3.0)
 
                 for i, k in enumerate([ky for ky in hyp.keys() if ky in meta]):  # plt.hist(v.ravel(), 300)
                     hyp[k] = float(x[i + n_result_values] * v[i])  # mutate

@@ -886,11 +886,11 @@ def strip_optimizer(f='best.pt', s=''):  # from utils.general import *; strip_op
     print(f"Optimizer stripped from {f},{(' saved as %s,' % s) if s else ''} {mb:.1f}MB")
 
 
-def print_mutation(hyp, results, yaml_file='hyp_evolved.yaml', bucket='', filename="evolve.txt"):
+def print_mutation(hyp, results, yaml_file='hyp_evolved.yaml', bucket='', filename="evolve.txt") -> None:
     # Print mutation results to evolve.txt (for use with train.py --evolve)
     a = '%10s' * len(hyp) % tuple(hyp.keys())  # hyperparam keys
     b = '%10.3g' * len(hyp) % tuple(hyp.values())  # hyperparam values
-    c = '%10.4g' * len(results) % results  # results (P, R, mAP@0.5, mAP@0.5:0.95, val_losses x 3)
+    c = '%10.4g' * len(results) % results  # results (P, R, mAP@0.5, mAP@0.5:0.95, val_losses x 4)
     print('\n%s\n%s\nEvolved fitness: %s\n' % (a, b, c))
 
     if bucket:
@@ -898,8 +898,9 @@ def print_mutation(hyp, results, yaml_file='hyp_evolved.yaml', bucket='', filena
         if gsutil_getsize(url) > (os.path.getsize(filename) if os.path.exists(filename) else 0):
             os.system('gsutil cp %s .' % url)  # download evolve.txt if larger than local
 
-    with open(filename, 'a') as f:  # append result
-        f.write(c + b + '\n')
+    with open(filename, 'a') as fid:  # append result
+        fid.write(c + b + '\n')
+
     x = np.unique(np.loadtxt(filename, ndmin=2), axis=0)  # load unique rows
     x = x[np.argsort(-fitness(x))]  # sort
     np.savetxt(filename, x, '%10.3g')  # save sort by fitness

@@ -125,7 +125,7 @@ class SigmoidBin(nn.Module):
 class FocalLoss(nn.Module):
     # Wraps focal loss around existing loss_fcn(), i.e. criteria = FocalLoss(nn.BCEWithLogitsLoss(), gamma=1.5)
     def __init__(self, loss_fcn, gamma=1.5, alpha=0.25):
-        super(FocalLoss, self).__init__()
+        super().__init__()
         self.loss_fcn = loss_fcn  # must be nn.BCEWithLogitsLoss()
         self.gamma = gamma
         self.alpha = alpha
@@ -1036,7 +1036,13 @@ class ComputeLossOTA(ComputeLoss):
         for ky in ['n_anchors', 'n_classes', 'n_layers', 'anchors', 'stride']:
             setattr(self, ky, getattr(det, ky))
 
-    def __call__(self, predictions, targets: torch.Tensor, imgs: torch.Tensor, masks: torch.Tensor = None):  # predictions, targets, model
+    def __call__(
+            self,
+            predictions,
+            targets: torch.Tensor,
+            imgs: torch.Tensor,
+            masks: torch.Tensor = None
+    ):  # predictions, targets, model
         predictions_, proto = self._format_predictions(predictions)
 
         n_anchors = len(self.anchors)  # == self.n_layers == len(predictions_)
