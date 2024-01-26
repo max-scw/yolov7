@@ -17,7 +17,7 @@ import torch
 import torchvision
 import yaml
 
-from typing import Union
+from typing import Union, Dict, List, Tuple
 
 from utils.google_utils import gsutil_getsize
 from utils.metrics import fitness
@@ -47,6 +47,7 @@ def crop_masks(masks, boxes):
     c = torch.arange(h, device=masks.device, dtype=x1.dtype)[None, :, None]  # cols shape(h,1,1)
 
     return masks * ((r >= x1) * (r < x2) * (c >= y1) * (c < y2))
+
 
 def set_logging(rank=-1, filename: Union[str, Path] = None):
     if filename:
@@ -446,8 +447,6 @@ def bbox_iou(box1, box2, x1y1x2y2=True, GIoU=False, DIoU=False, CIoU=False, eps=
             return iou - (c_area - union) / c_area  # GIoU
     else:
         return iou  # IoU
-
-
 
 
 def bbox_alpha_iou(box1, box2, x1y1x2y2=False, GIoU=False, DIoU=False, CIoU=False, alpha=2, eps=1e-9):
@@ -886,37 +885,64 @@ def strip_optimizer(f='best.pt', s=''):  # from utils.general import *; strip_op
     print(f"Optimizer stripped from {f},{(' saved as %s,' % s) if s else ''} {mb:.1f}MB")
 
 
-def print_mutation(hyp, results, yaml_file='hyp_evolved.yaml', bucket='', filename="evolve.txt") -> None:
+def print_mutation(
+        hyp: Dict[str, float],
+        results: Tuple[float, float, float, float, float, float, float, float],
+        yaml_file: str = 'hyp_evolved.yaml',
+        bucket: Union[str, Path] = "",
+        filename: Union[str, Path] = "evolve.txt"
+) -> bool:
+    """
+    Saves the hyperparameters to files and prints them to the command line output
+
+    :param hyp: dictionary of hyperparameters
+    :param results: metrics that the loss function provides
+    :param yaml_file: Name of the YAML file that the current hyperparameters are stored in
+    :param bucket: Name of the Google Cloud Service bucket. If empty, the <filename> file is searched for relative to the current working directory
+    :param filename: Name of the text file that stores the results, i.e. metrics and evolved hyperparameters
+    :return: True at end of function
+    """
+    # number of result values / evaluation values from training function
+    n_result_values = len(results)
+    n_hyp_params = len(hyp)
+
     # Print mutation results to evolve.txt (for use with train.py --evolve)
-    a = '%10s' * len(hyp) % tuple(hyp.keys())  # hyperparam keys
-    b = '%10.3g' * len(hyp) % tuple(hyp.values())  # hyperparam values
-    c = '%10.4g' * len(results) % results  # results (P, R, mAP@0.5, mAP@0.5:0.95, val_losses x 4)
+    a = '%10s' * n_hyp_params % tuple(hyp.keys())  # hyperparameter keys
+    b = '%10.3g' * n_hyp_params % tuple(hyp.values())  # hyperparameter values
+    c = '%10.4g' * n_result_values % results  # results (P, R, mAP@0.5, mAP@0.5:0.95, val_losses x 4)
     print('\n%s\n%s\nEvolved fitness: %s\n' % (a, b, c))
 
+    # download filename if larger than local
     if bucket:
-        url = f'gs://%s/{filename}' % bucket
+        url = f'gs://{bucket}/{filename}'
         if gsutil_getsize(url) > (os.path.getsize(filename) if os.path.exists(filename) else 0):
-            os.system('gsutil cp %s .' % url)  # download evolve.txt if larger than local
+            os.system(f'gsutil cp {url} .')
 
-    with open(filename, 'a') as fid:  # append result
+    # open file and append results in a new line
+    with open(filename, 'a') as fid:
         fid.write(c + b + '\n')
 
+    # sort lines in results-file w.r.t. to fittness (to fist line)
     x = np.unique(np.loadtxt(filename, ndmin=2), axis=0)  # load unique rows
     x = x[np.argsort(-fitness(x))]  # sort
-    np.savetxt(filename, x, '%10.3g')  # save sort by fitness
+    np.savetxt(filename, x, fmt='%10.3g')  # save sort by fitness
 
     # Save yaml
-    for i, k in enumerate(hyp.keys()):
-        hyp[k] = float(x[0, i + 7])
-    with open(yaml_file, 'w') as f:
-        results = tuple(x[0, :7])
-        c = '%10.4g' * len(results) % results  # results (P, R, mAP@0.5, mAP@0.5:0.95, val_losses x 3)
-        f.write('# Hyperparameter Evolution Results\n# Generations: %g\n# Metrics: ' % len(x) + c + '\n\n')
-        yaml.dump(hyp, f, sort_keys=False)
+    for i, ky in enumerate(hyp.keys()):
+        hyp[ky] = float(x[0, i + n_result_values])
 
+    # write YAML file with new parameters
+    with open(yaml_file, 'w') as fid:
+        results = tuple(x[0, :n_result_values])
+        c = '%10.4g' * n_result_values % results  # results (P, R, mAP@0.5, mAP@0.5:0.95, val_losses x 3)
+        fid.write(f'# Hyperparameter Evolution Results\n# Generations: {len(x)}\n# Metrics: {c}\n\n')
+        yaml.dump(hyp, fid, sort_keys=False)
+
+    # upload to server
     if bucket:
-        os.system(f'gsutil cp {filename} %s gs://%s' % (yaml_file, bucket))  # upload
+        os.system(f'gsutil cp {filename} {yaml_file} gs://{bucket}')  # upload
 
+    return True
 
 def apply_classifier(x, model, img, im0):
     # applies a second stage classifier to yolo outputs
