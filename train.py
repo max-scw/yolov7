@@ -39,6 +39,7 @@ from utils.torch_utils import ModelEMA, select_device, intersect_dicts, torch_di
 
 from utils.debugging import print_debug_msg
 
+from typing import Union, Dict, List, Tuple
 import warnings
 
 warnings.filterwarnings(
@@ -50,8 +51,8 @@ warnings.filterwarnings(
 logger = logging.getLogger(__name__)
 
 
-def train(hyp, opt, device, tb_writer=None):
-    logger.info(colorstr('hyperparameters: ') + ', '.join(f'{k}={v}' for k, v in hyp.items()))
+def train(hyp: Dict[str, float], opt, device):
+    logger.info(colorstr('hyperparameters: ') + ', '.join(f'{ky}={val}' for ky, val in hyp.items()))
     save_dir = Path(opt.save_dir)
     epochs = opt.epochs
     batch_size = opt.batch_size
@@ -288,8 +289,7 @@ def train(hyp, opt, device, tb_writer=None):
     )
     mlc = np.concatenate(dataset.labels, 0)[:, 0].max()  # max label class
     n_batches = len(dataloader)  # number of batches
-    assert mlc < n_classes, 'Label class %g exceeds nc=%g in %s. Possible class labels are 0-%g' % (
-    mlc, n_classes, opt.data, n_classes - 1)
+    assert mlc < n_classes, f'Label class {mlc} exceeds nc={n_classes} in {opt.data}. Possible class labels are 0-{n_classes - 1}'
 
     # Process 0
     if rank in [-1, 0]:
@@ -313,12 +313,6 @@ def train(hyp, opt, device, tb_writer=None):
             c = torch.tensor(labels[:, 0])  # classes
             # cf = torch.bincount(c.long(), minlength=nc) + 1.  # frequency
             # model._initialize_biases(cf.to(device))
-            if plots:
-                # plot_labels(labels, names, save_dir, loggers)
-                if tb_writer:
-                    print_debug_msg(
-                        f"tb_writer.add_histogram('classes', c, 0):tb_writer.add_histogram('classes', {c}, 0)")
-                    tb_writer.add_histogram('classes', c, 0)
 
             # Anchors
             if not opt.noautoanchor:
@@ -333,8 +327,7 @@ def train(hyp, opt, device, tb_writer=None):
 
     # Model parameters
     hyp['box'] *= 3. / n_detection_layers  # scale to layers
-    hyp[
-        'cls'] *= n_classes / 80. * 3. / n_detection_layers  # scale to classes and layers  # INFO: 80 is the number of classes in COCO
+    hyp['cls'] *= n_classes / 80. * 3. / n_detection_layers  # scale to classes and layers  # INFO: 80 is the number of classes in COCO
     hyp['obj'] *= (imgsz / 640) ** 2 * 3. / n_detection_layers  # scale to image size and layers
     # if 'kpt' in hyp:
     #     hyp['kpt'] *= 3. / nl / n_kpt # scale to layers and number of keypoints  # TODO: add hyp['kpt'] scaling
@@ -352,7 +345,7 @@ def train(hyp, opt, device, tb_writer=None):
                               1000)  # number of warmup iterations, max(3 epochs, 1k iterations)
     # nw = min(nw, (epochs - start_epoch) / 2 * nb)  # limit warmup to < 1/2 of training
     maps = np.zeros(n_classes)  # mAP per class
-    results = (0, 0, 0, 0, 0, 0, 0)  # P, R, mAP@.5, mAP@.5-.95, val_loss(box, obj, cls)
+    results = (0, 0, 0, 0, 0, 0, 0, 0)  # P, R, mAP@.5, mAP@.5-.95, val_loss(box, obj, cls, add)
     scheduler.last_epoch = start_epoch - 1  # do not move
     scaler = amp.GradScaler(enabled=cuda)
     compute_loss_ota = ComputeLossOTA(model)  # init loss class
@@ -386,7 +379,7 @@ def train(hyp, opt, device, tb_writer=None):
         # b = int(random.uniform(0.25 * imgsz, 0.75 * imgsz + gs) // gs * gs)
         # dataset.mosaic_border = [b - imgsz, -b]  # height, width borders
 
-        mloss = torch.zeros(5, device=device)  # mean losses # TODO: 6
+        mloss = torch.zeros(5, device=device)  # mean losses
         if rank != -1:
             dataloader.sampler.set_epoch(epoch)
         pbar = enumerate(dataloader)
@@ -396,8 +389,7 @@ def train(hyp, opt, device, tb_writer=None):
             pbar = tqdm(pbar, total=n_batches)  # progress bar
         optimizer.zero_grad()
 
-        for i, (
-        imgs, targets, paths, _, masks) in pbar:  # batch -------------------------------------------------------------
+        for i, (imgs, targets, paths, _, masks) in pbar:  # batch ------------------------------------------------------
             if opt.export_training_images and Path(opt.export_training_images).is_dir():
                 path_to_export = Path(opt.export_training_images) / opt.name
                 if not path_to_export.is_dir():
@@ -423,8 +415,10 @@ def train(hyp, opt, device, tb_writer=None):
             if n_integrated_batches <= n_warmup_iterations:
                 xi = [0, n_warmup_iterations]  # x interp
                 # model.gr = np.interp(ni, xi, [0.0, 1.0])  # iou loss ratio (obj_loss = 1.0 or iou)
-                accumulate = max(1, np.interp(n_integrated_batches, xi,
-                                              [1, batch_size_nominal / total_batch_size]).round())
+                accumulate = max(1, np.interp(n_integrated_batches,
+                                              xi,
+                                              [1, batch_size_nominal / total_batch_size]
+                                              ).round())
                 for j, x in enumerate(optimizer.param_groups):
                     # bias lr falls from 0.1 to lr0, all other lrs rise from 0.0 to lr0
                     x['lr'] = np.interp(n_integrated_batches, xi,
@@ -481,9 +475,8 @@ def train(hyp, opt, device, tb_writer=None):
             if rank in [-1, 0]:
                 mloss = (mloss * i + loss_items) / (i + 1)  # update mean losses
                 mem = '%.3gG' % (torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0)  # (GB)
-                info_str = ('%10s' * 2 + '%10.4g' * 7) % (
-                    '%g/%g' % (epoch, epochs - 1), mem, *mloss, targets.shape[0], imgs.shape[-1]
-                )
+                eps = f"{epoch}/{epochs - 1}"
+                info_str = ('%10s' * 2 + '%10.4g' * 7) % (eps, mem, *mloss, targets.shape[0], imgs.shape[-1])
                 pbar.set_description(info_str)
 
                 # Plot
@@ -537,9 +530,6 @@ def train(hyp, opt, device, tb_writer=None):
                     'metrics/precision', 'metrics/recall', 'metrics/mAP_0.5', 'metrics/mAP_0.5:0.95',
                     'val/box_loss', 'val/obj_loss', 'val/cls_loss',  # val loss
                     'x/lr0', 'x/lr1', 'x/lr2']  # params
-            for x, tag in zip(list(mloss[:-1]) + list(results) + lr, tags):
-                if tb_writer:
-                    tb_writer.add_scalar(tag, x, epoch)  # tensorboard
 
             # Update best mAP
             fi = fitness(np.array(results).reshape(1, -1))  # weighted combination of [P, R, mAP@.5, mAP@.5-.95]
@@ -548,14 +538,15 @@ def train(hyp, opt, device, tb_writer=None):
 
             # Save model
             if (not opt.nosave) or (final_epoch and not opt.evolve):  # if save
-                ckpt = {'epoch': epoch,
-                        'best_fitness': best_fitness,
-                        'training_results': results_file.read_text(),
-                        'model': deepcopy(model.module if is_parallel(model) else model).half(),
-                        'ema': deepcopy(ema.ema).half(),
-                        'updates': ema.updates,
-                        'optimizer': optimizer.state_dict(),
-                        }
+                ckpt = {
+                    'epoch': epoch,
+                    'best_fitness': best_fitness,
+                    'training_results': results_file.read_text(),
+                    'model': deepcopy(model.module if is_parallel(model) else model).half(),
+                    'ema': deepcopy(ema.ema).half(),
+                    'updates': ema.updates,
+                    'optimizer': optimizer.state_dict()
+                }
 
                 # Save last, best and delete
                 torch.save(ckpt, last)
@@ -595,7 +586,7 @@ def train(hyp, opt, device, tb_writer=None):
             plot_results(save_dir=save_dir)  # save as results.png
 
         # Test best.pt
-        logger.info('%g epochs completed in %.3f hours.\n' % (epoch - start_epoch + 1, (time.time() - t0) / 3600))
+        logger.info(f'{epoch - start_epoch + 1} epochs completed in {(time.time() - t0) / 3600:.3f} hours.\n')
         if opt.data.endswith('coco.yaml') and n_classes == 80:  # if COCO
             for m in (last, best) if best.exists() else last:  # speed, mAP tests
                 results, _, _ = test.test(
@@ -644,7 +635,8 @@ if __name__ == '__main__':
     parser.add_argument('--evolve', action='store_true', help='evolve hyperparameters')
     parser.add_argument('--evolve-generations', type=int, default=300,
                         help='how many generations / iterations to evolve hyperparameters')
-    parser.add_argument('--bucket', type=str, default='', help='gsutil bucket')
+    parser.add_argument('--bucket', type=str, default='',
+                        help='gsutil bucket to upload the file the the results of the evolutionary optimization to.')
     parser.add_argument('--cache-images', action='store_true', help='cache images for faster training')
     parser.add_argument('--image-weights', action='store_true', help='use weighted image selection for training')
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
@@ -727,19 +719,14 @@ if __name__ == '__main__':
     # Train
     logger.info(opt)
     if not opt.evolve:
-        tb_writer = None  # init loggers
-        # if opt.global_rank in [-1, 0]:
-        #     prefix = colorstr('tensorboard: ')
-        #     logger.info(f"{prefix}Start with 'tensorboard --logdir {opt.project}', view at http://localhost:6006/")
-        #     print_debug_msg(f": SummaryWriter(opt.save_dir):SummaryWriter({opt.save_dir})")
-        #     tb_writer = SummaryWriter(opt.save_dir)  # Tensorboard
-        train(hyp, opt, device, tb_writer)
+        train(hyp, opt, device)
 
     # Evolve hyperparameters (optional)
     else:
         path_to_evolve_notes = Path(opt.name).with_suffix(".txt")
         # Hyperparameter evolution metadata (mutation scale 0-1, lower_limit, upper_limit)
         meta = {
+            # 'key': (gain, min, max)
             'lr0': (1, 1e-5, 1e-1),  # initial learning rate (SGD=1E-2, Adam=1E-3)
             'lrf': (1, 0.01, 1.0),  # final OneCycleLR learning rate (lr0 * lrf)
             'momentum': (0.3, 0.6, 0.98),  # SGD momentum/Adam beta1
@@ -783,13 +770,13 @@ if __name__ == '__main__':
         # ei = [isinstance(x, (int, float)) for x in hyp.values()]  # evolvable indices
         yaml_file = Path(opt.save_dir) / f'hyp_evolved.yaml'  # save best result here
         if opt.bucket:
-            os.system(f'gsutil cp gs://%s/{path_to_evolve_notes.name} .' % opt.bucket)  # download evolve.txt if exists
+            os.system(f'gsutil cp gs://{opt.bucket}/{path_to_evolve_notes.name}.')  # download evolve.txt if exists
 
         # number of result values / evaluation values from training function
         n_result_values = 8
         for _ in range(opt.evolve_generations):  # generations to evolve
             if path_to_evolve_notes.exists():
-                # if file exists: select best hyps and mutate
+                # if file exists: select best hyperparameters and mutate
                 # Select parent(s)
                 parent = 'single'  # parent selection method: 'single' or 'weighted'
                 x = np.loadtxt(path_to_evolve_notes.as_posix(), ndmin=2)
@@ -809,7 +796,7 @@ if __name__ == '__main__':
                 p_mutation, sigma = 0.8, 0.2  # mutation probability, sigma
                 npr = np.random
                 npr.seed(int(time.time()))
-                gain = np.array([x[0] for x in meta.values()])  # gains 0-1
+                gain = np.array([x[0] for x in meta.values()])  # gains typically 0-1
                 ng = len(meta)
                 v = np.ones(ng)
                 while all(v == 1):  # mutate until a change occurs (prevent duplicates)
@@ -819,10 +806,10 @@ if __name__ == '__main__':
                     hyp[k] = float(x[i + n_result_values] * v[i])  # mutate
 
             # Constrain to limits
-            for k, v in meta.items():
-                hyp[k] = max(hyp[k], v[1])  # lower limit
-                hyp[k] = min(hyp[k], v[2])  # upper limit
-                hyp[k] = round(hyp[k], 5)  # significant digits
+            for ky, val in meta.items():
+                hyp[ky] = max(hyp[ky], val[1])  # lower limit
+                hyp[ky] = min(hyp[ky], val[2])  # upper limit
+                hyp[ky] = round(hyp[ky], 5)  # significant digits
 
             # Train mutation
             results = train(hyp.copy(), opt, device)
