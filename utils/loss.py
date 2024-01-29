@@ -124,7 +124,7 @@ class SigmoidBin(nn.Module):
 
 class FocalLoss(nn.Module):
     # Wraps focal loss around existing loss_fcn(), i.e. criteria = FocalLoss(nn.BCEWithLogitsLoss(), gamma=1.5)
-    def __init__(self, loss_fcn, gamma=1.5, alpha=0.25):
+    def __init__(self, loss_fcn, gamma: float = 1.5, alpha: float = 0.25):
         super().__init__()
         self.loss_fcn = loss_fcn  # must be nn.BCEWithLogitsLoss()
         self.gamma = gamma
@@ -154,20 +154,20 @@ class FocalLoss(nn.Module):
 
 class QFocalLoss(nn.Module):
     # Wraps Quality focal loss around existing loss_fcn(), i.e. criteria = FocalLoss(nn.BCEWithLogitsLoss(), gamma=1.5)
-    def __init__(self, loss_fcn, gamma=1.5, alpha=0.25):
-        super(QFocalLoss, self).__init__()
+    def __init__(self, loss_fcn, gamma: float = 1.5, alpha: float = 0.25):
+        super().__init__()
         self.loss_fcn = loss_fcn  # must be nn.BCEWithLogitsLoss()
         self.gamma = gamma
         self.alpha = alpha
         self.reduction = loss_fcn.reduction
         self.loss_fcn.reduction = 'none'  # required to apply FL to each element
 
-    def forward(self, pred, true):
-        loss = self.loss_fcn(pred, true)
+    def forward(self, pred, label):
+        loss = self.loss_fcn(pred, label)
 
         pred_prob = torch.sigmoid(pred)  # prob from logits
-        alpha_factor = true * self.alpha + (1 - true) * (1 - self.alpha)
-        modulating_factor = torch.abs(true - pred_prob) ** self.gamma
+        alpha_factor = label * self.alpha + (1 - label) * (1 - self.alpha)
+        modulating_factor = torch.abs(label - pred_prob) ** self.gamma
         loss *= alpha_factor * modulating_factor
 
         if self.reduction == 'mean':
@@ -431,19 +431,23 @@ class ComputeLoss:
     def __init__(self, model, autobalance: bool = False, overlap: bool = False):
         super().__init__()
         device = next(model.parameters()).device  # get model device
-        h = model.hyp  # hyperparameters
+        hyp = model.hyp  # hyperparameters
 
         # Define criteria: binary cross-entropy with logits loss for classes and object
-        BCEcls = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([h['cls_pw']], device=device))
-        BCEobj = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([h['obj_pw']], device=device))
+        BCEcls = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([hyp['cls_pw']], device=device))
+        BCEobj = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([hyp['obj_pw']], device=device))
 
         # Class label smoothing https://arxiv.org/pdf/1902.04103.pdf eqn 3
-        self.cp, self.cn = smooth_BCE(eps=h.get('label_smoothing', 0.0))  # positive, negative BCE targets
+        self.cp, self.cn = smooth_BCE(eps=hyp.get('label_smoothing', 0.0))  # positive, negative BCE targets
 
         # Focal loss
-        g = h['fl_gamma']  # focal loss gamma
+        g = hyp['fl_gamma']  # focal loss gamma
         if g > 0:
-            BCEcls, BCEobj = FocalLoss(BCEcls, g), FocalLoss(BCEobj, g)
+            if 'qfl' in hyp and hyp['qfl']:
+                BCEcls, BCEobj = QFocalLoss(BCEcls, g), QFocalLoss(BCEobj, g)
+            else:
+                # default focal loss. Original YOLOv7 implementation
+                BCEcls, BCEobj = FocalLoss(BCEcls, g), FocalLoss(BCEobj, g)
 
         det = model.module.model[-1] if is_parallel(model) else model.model[-1]  # Detect() module
         self.balance = {3: [4.0, 1.0, 0.4]}.get(det.n_layers, [4.0, 1.0, 0.25, 0.06, .02])  # P3-P7
@@ -451,7 +455,7 @@ class ComputeLoss:
         self.BCEcls = BCEcls
         self.BCEobj = BCEobj
         self.gr = model.gr
-        self.hyp = h
+        self.hyp = hyp
         self.autobalance = autobalance
         self.overlap = overlap
         for ky in ['n_anchors', 'n_classes', 'n_layers', 'anchors', 'stride']:
@@ -1010,31 +1014,6 @@ class ComputeLossOTA(ComputeLoss):
     # Compute losses
     def __init__(self, model, autobalance: bool = False):
         super().__init__(model, autobalance, overlap=False)
-        device = next(model.parameters()).device  # get model device
-        hyp = model.hyp  # hyperparameters
-
-        # Define criteria: binary cross-entropy with logits loss for classes and object
-        BCEcls = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([hyp['cls_pw']], device=device))
-        BCEobj = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([hyp['obj_pw']], device=device))
-
-        # Class label smoothing https://arxiv.org/pdf/1902.04103.pdf eqn 3
-        self.cp, self.cn = smooth_BCE(eps=hyp.get('label_smoothing', 0.0))  # positive, negative BCE targets
-
-        # Focal loss
-        g = hyp['fl_gamma']  # focal loss gamma
-        if g > 0:
-            BCEcls, BCEobj = FocalLoss(BCEcls, g), FocalLoss(BCEobj, g)
-
-        det = model.module.model[-1] if is_parallel(model) else model.model[-1]  # Detect() module
-        self.balance = {3: [4.0, 1.0, 0.4]}.get(det.n_layers, [4.0, 1.0, 0.25, 0.06, .02])  # P3-P7
-        self.ssi = list(det.stride).index(16) if autobalance else 0  # stride 16 index
-        self.BCEcls = BCEcls
-        self.BCEobj = BCEobj
-        self.gr = model.gr
-        self.hyp = hyp
-        self.autobalance = autobalance
-        for ky in ['n_anchors', 'n_classes', 'n_layers', 'anchors', 'stride']:
-            setattr(self, ky, getattr(det, ky))
 
     def __call__(
             self,
