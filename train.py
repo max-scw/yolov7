@@ -357,7 +357,7 @@ def train(hyp: Dict[str, float], opt, device):
     # save initial checkpoint
     torch.save(model, wdir / 'init.pt')
 
-    for epoch in range(start_epoch, epochs):  # epoch ------------------------------------------------------------------
+    for i_epoch in range(start_epoch, epochs):  # epoch ------------------------------------------------------------------
         # put model in training mode
         model.train()
 
@@ -381,7 +381,7 @@ def train(hyp: Dict[str, float], opt, device):
 
         mloss = torch.zeros(5, device=device)  # mean losses
         if rank != -1:
-            dataloader.sampler.set_epoch(epoch)
+            dataloader.sampler.set_epoch(i_epoch)
         pbar = enumerate(dataloader)
         logger.info(
             ('\n' + '%10s' * 9) % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls', 'add', 'total', 'labels', 'img_size'))
@@ -389,14 +389,14 @@ def train(hyp: Dict[str, float], opt, device):
             pbar = tqdm(pbar, total=n_batches)  # progress bar
         optimizer.zero_grad()
 
-        for i, (imgs, targets, paths, _, masks) in pbar:  # batch ------------------------------------------------------
+        for i_batch, (imgs, targets, paths, _, masks) in pbar:  # batch ------------------------------------------------------
             if opt.export_training_images and Path(opt.export_training_images).is_dir():
                 path_to_export = Path(opt.export_training_images) / opt.name
                 if not path_to_export.is_dir():
                     path_to_export.mkdir()
                     print_debug_msg(f"Directory created to export (augmented) training batches: "
                                     f"{path_to_export.as_posix()}")
-                p2fl = path_to_export / f"{opt.name}_e{epoch}_b{i}.jpg"
+                p2fl = path_to_export / f"{opt.name}_e{i_epoch}_b{i_batch}.jpg"
                 print_debug_msg(f"{p2fl.as_posix()}: {imgs.shape}")
                 # plot ground truth
                 plot_images(
@@ -408,21 +408,19 @@ def train(hyp: Dict[str, float], opt, device):
                     masks=masks
                 )
 
-            n_integrated_batches = i + n_batches * epoch  # number integrated batches (since train start)
+            n_integrated_batches = i_batch + n_batches * i_epoch  # number integrated batches (since train start)
             imgs = imgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
 
             # Warmup
             if n_integrated_batches <= n_warmup_iterations:
                 xi = [0, n_warmup_iterations]  # x interp
                 # model.gr = np.interp(ni, xi, [0.0, 1.0])  # iou loss ratio (obj_loss = 1.0 or iou)
-                accumulate = max(1, np.interp(n_integrated_batches,
-                                              xi,
-                                              [1, batch_size_nominal / total_batch_size]
-                                              ).round())
+                warmup_batch = np.interp(n_integrated_batches, xi,[1, batch_size_nominal / total_batch_size]).round()
+                accumulate = max(1, warmup_batch)
                 for j, x in enumerate(optimizer.param_groups):
                     # bias lr falls from 0.1 to lr0, all other lrs rise from 0.0 to lr0
                     x['lr'] = np.interp(n_integrated_batches, xi,
-                                        [hyp['warmup_bias_lr'] if j == 2 else 0.0, x['initial_lr'] * lf(epoch)])
+                                        [hyp['warmup_bias_lr'] if j == 2 else 0.0, x['initial_lr'] * lf(i_epoch)])
                     if 'momentum' in x:
                         x['momentum'] = np.interp(n_integrated_batches, xi, [hyp['warmup_momentum'], hyp['momentum']])
 
@@ -473,9 +471,9 @@ def train(hyp: Dict[str, float], opt, device):
 
             # Print
             if rank in [-1, 0]:
-                mloss = (mloss * i + loss_items) / (i + 1)  # update mean losses
+                mloss = (mloss * i_batch + loss_items) / (i_batch + 1)  # update mean losses
                 mem = '%.3gG' % (torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0)  # (GB)
-                eps = f"{epoch}/{epochs - 1}"
+                eps = f"{i_epoch}/{epochs - 1}"
                 info_str = ('%10s' * 2 + '%10.4g' * 7) % (eps, mem, *mloss, targets.shape[0], imgs.shape[-1])
                 pbar.set_description(info_str)
 
@@ -493,14 +491,14 @@ def train(hyp: Dict[str, float], opt, device):
         # end epoch ----------------------------------------------------------------------------------------------------
 
         # Scheduler
-        lr = [x['lr'] for x in optimizer.param_groups]  # for tensorboard
+        # lr = [x['lr'] for x in optimizer.param_groups]  # for tensorboard
         scheduler.step()
 
         # DDP process 0 or single-GPU
         if rank in [-1, 0]:
             # mAP
             ema.update_attr(model, include=['yaml', 'nc', 'hyp', 'gr', 'names', 'stride', 'class_weights'])
-            final_epoch = epoch + 1 == epochs
+            final_epoch = i_epoch + 1 == epochs
             if not opt.notest or final_epoch:  # Calculate mAP
                 # wandb_logger.current_epoch = epoch + 1
                 results, maps, times = test.test(
@@ -539,7 +537,7 @@ def train(hyp: Dict[str, float], opt, device):
             # Save model
             if (not opt.nosave) or (final_epoch and not opt.evolve):  # if save
                 ckpt = {
-                    'epoch': epoch,
+                    'epoch': i_epoch,
                     'best_fitness': best_fitness,
                     'training_results': results_file.read_text(),
                     'model': deepcopy(model.module if is_parallel(model) else model).half(),
@@ -553,9 +551,9 @@ def train(hyp: Dict[str, float], opt, device):
                 if best_fitness == fi:
                     torch.save(ckpt, best)
 
-                if (best_fitness == fi) and (epoch >= 200):
+                if (best_fitness == fi) and (i_epoch >= 200):
                     # save checkpoint
-                    filepath = wdir / f'best_{epoch:05d}.pt'
+                    filepath = wdir / f'best_{i_epoch:05d}.pt'
                     torch.save(ckpt, filepath)
                     # get list of files
                     checkpoints = list(wdir.glob("best_*.pt"))
@@ -570,11 +568,11 @@ def train(hyp: Dict[str, float], opt, device):
                             print_debug_msg(f"Delete file {file_to_delete.as_posix()}")
                             file_to_delete.unlink()
 
-                if epoch == 0 or \
-                        ((epoch + 1) % opt.save_period) == 0 or \
-                        epoch >= (epochs - 5):
+                if i_epoch == 0 or \
+                        ((i_epoch + 1) % opt.save_period) == 0 or \
+                        i_epoch >= (epochs - 5):
                     # save fist checkpoint or in save-period or the X last checkpoints
-                    filepath = wdir / f'epoch_{epoch:05d}.pt'
+                    filepath = wdir / f'epoch_{i_epoch:05d}.pt'
                     torch.save(ckpt, filepath)
 
                 del ckpt
@@ -586,7 +584,7 @@ def train(hyp: Dict[str, float], opt, device):
             plot_results(save_dir=save_dir)  # save as results.png
 
         # Test best.pt
-        logger.info(f'{epoch - start_epoch + 1} epochs completed in {(time.time() - t0) / 3600:.3f} hours.\n')
+        logger.info(f'{i_epoch - start_epoch + 1} epochs completed in {(time.time() - t0) / 3600:.3f} hours.\n')
         if opt.data.endswith('coco.yaml') and n_classes == 80:  # if COCO
             for m in (last, best) if best.exists() else last:  # speed, mAP tests
                 results, _, _ = test.test(
@@ -682,7 +680,7 @@ if __name__ == '__main__':
     #    check_git_status()
     #    check_requirements()
     for arg, value in sorted(vars(opt).items()):
-        logging.info("Argument %s: %r", arg, value)
+        logging.info(f"Argument {arg}: {value}")
 
     # Resume
     if opt.resume:  # resume an interrupted run
@@ -742,7 +740,8 @@ if __name__ == '__main__':
             # 'iou_t': (0, 0.1, 0.7),  # IoU training threshold
             'anchor_t': (1, 2.0, 8.0),  # anchor-multiple threshold
             'anchors': (2, 2.0, 10.0),  # anchors per output grid (0 to ignore)
-            'fl_gamma': (0, 0.0, 2.0),  # focal loss gamma (efficientDet default gamma=1.5)
+            'fl_gamma': (0, 0.0, 2.0),  # focal loss gamma (efficientDet default gamma=1.5, RetinaNet gamma=2, robust in [0.5, 5])
+            # 'fl_alpha': (0, 0.25, 0.75), # focal loss alpha (default alpha=0.25) | usually less sensitive than gamma and therefore fixed
             'hsv_h': (1, 0.0, 0.1),  # image HSV-Hue augmentation (fraction)
             'hsv_s': (1, 0.0, 0.9),  # image HSV-Saturation augmentation (fraction)
             'hsv_v': (1, 0.0, 0.9),  # image HSV-Value augmentation (fraction)

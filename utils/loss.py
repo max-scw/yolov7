@@ -132,16 +132,27 @@ class FocalLoss(nn.Module):
         self.reduction = loss_fcn.reduction
         self.loss_fcn.reduction = 'none'  # required to apply FL to each element
 
-    def forward(self, pred, true):
-        loss = self.loss_fcn(pred, true)
+    def _alpha_factor(self, label):
+        # alpha induced factor
+        return label * self.alpha + (1 - label) * (1 - self.alpha)
+
+    def _modulating_factor(self, pred_prob, label):
+        # modulation factor
+        p_t = label * pred_prob + (1 - label) * (1 - pred_prob)
+        return (1.0 - p_t) ** self.gamma
+
+    def forward(self, pred, label):
+        loss = self.loss_fcn(pred, label)
         # p_t = torch.exp(-loss)
         # loss *= self.alpha * (1.000001 - p_t) ** self.gamma  # non-zero power for gradient stability
 
         # TF implementation https://github.com/tensorflow/addons/blob/v0.7.1/tensorflow_addons/losses/focal_loss.py
         pred_prob = torch.sigmoid(pred)  # prob from logits
-        p_t = true * pred_prob + (1 - true) * (1 - pred_prob)
-        alpha_factor = true * self.alpha + (1 - true) * (1 - self.alpha)
-        modulating_factor = (1.0 - p_t) ** self.gamma
+        # p_t = label * pred_prob + (1 - label) * (1 - pred_prob)
+        # alpha_factor = label * self.alpha + (1 - label) * (1 - self.alpha)
+        # modulating_factor = (1.0 - p_t) ** self.gamma
+        alpha_factor = self._alpha_factor(label)
+        modulating_factor = self._modulating_factor(pred_prob, label)
         loss *= alpha_factor * modulating_factor
 
         if self.reduction == 'mean':
@@ -152,30 +163,35 @@ class FocalLoss(nn.Module):
             return loss
 
 
-class QFocalLoss(nn.Module):
-    # Wraps Quality focal loss around existing loss_fcn(), i.e. criteria = FocalLoss(nn.BCEWithLogitsLoss(), gamma=1.5)
-    def __init__(self, loss_fcn, gamma: float = 1.5, alpha: float = 0.25):
-        super().__init__()
-        self.loss_fcn = loss_fcn  # must be nn.BCEWithLogitsLoss()
-        self.gamma = gamma
-        self.alpha = alpha
-        self.reduction = loss_fcn.reduction
-        self.loss_fcn.reduction = 'none'  # required to apply FL to each element
+class QFocalLoss(FocalLoss):
+    def _modulating_factor(self, pred_prob, label):
+        # modulation factor
+        return torch.abs(label - pred_prob) ** self.gamma
 
-    def forward(self, pred, label):
-        loss = self.loss_fcn(pred, label)
-
-        pred_prob = torch.sigmoid(pred)  # prob from logits
-        alpha_factor = label * self.alpha + (1 - label) * (1 - self.alpha)
-        modulating_factor = torch.abs(label - pred_prob) ** self.gamma
-        loss *= alpha_factor * modulating_factor
-
-        if self.reduction == 'mean':
-            return loss.mean()
-        elif self.reduction == 'sum':
-            return loss.sum()
-        else:  # 'none'
-            return loss
+# class QFocalLoss(nn.Module):
+#     # Wraps Quality focal loss around existing loss_fcn(), i.e. criteria = FocalLoss(nn.BCEWithLogitsLoss(), gamma=1.5)
+#     def __init__(self, loss_fcn, gamma: float = 1.5, alpha: float = 0.25):
+#         super().__init__()
+#         self.loss_fcn = loss_fcn  # must be nn.BCEWithLogitsLoss()
+#         self.gamma = gamma
+#         self.alpha = alpha
+#         self.reduction = loss_fcn.reduction
+#         self.loss_fcn.reduction = 'none'  # required to apply FL to each element
+#
+#     def forward(self, pred, label):
+#         loss = self.loss_fcn(pred, label)
+#
+#         pred_prob = torch.sigmoid(pred)  # prob from logits
+#         alpha_factor = label * self.alpha + (1 - label) * (1 - self.alpha)
+#         modulating_factor = torch.abs(label - pred_prob) ** self.gamma
+#         loss *= alpha_factor * modulating_factor
+#
+#         if self.reduction == 'mean':
+#             return loss.mean()
+#         elif self.reduction == 'sum':
+#             return loss.sum()
+#         else:  # 'none'
+#             return loss
 
 
 class RankSort(torch.autograd.Function):
@@ -441,13 +457,14 @@ class ComputeLoss:
         self.cp, self.cn = smooth_BCE(eps=hyp.get('label_smoothing', 0.0))  # positive, negative BCE targets
 
         # Focal loss
-        g = hyp['fl_gamma']  # focal loss gamma
-        if g > 0:
-            if 'qfl' in hyp and hyp['qfl']:
-                BCEcls, BCEobj = QFocalLoss(BCEcls, g), QFocalLoss(BCEobj, g)
-            else:
-                # default focal loss. Original YOLOv7 implementation
-                BCEcls, BCEobj = FocalLoss(BCEcls, g), FocalLoss(BCEobj, g)
+        fl_gamma = hyp['fl_gamma'] if 'fl_gamma' in hyp else 0 # focal loss gamma
+        fl_alpha = hyp['fl_alpha'] if 'fl_alpha' in hyp else 0.25  # focal loss gamma
+        if fl_gamma > 0:
+            # select focal loss function
+            # default focal loss. Original YOLOv7 implementation
+            fnc = QFocalLoss if 'qfl' in hyp and hyp['qfl'] else FocalLoss
+            # extend / package binary cross entropy (BCE) loss functions
+            BCEcls, BCEobj = fnc(BCEcls, fl_gamma, fl_alpha), fnc(BCEobj, fl_gamma, fl_alpha)
 
         det = model.module.model[-1] if is_parallel(model) else model.model[-1]  # Detect() module
         self.balance = {3: [4.0, 1.0, 0.4]}.get(det.n_layers, [4.0, 1.0, 0.25, 0.06, .02])  # P3-P7
