@@ -129,7 +129,7 @@ def test(
         targets = targets.to(device)
         batch_size, _, height, width = img.shape  # batch size, channels, height, width
 
-        if masks is None or (isinstance(masks, tuple) and all([el is None for el in masks])):
+        if masks is None or (isinstance(masks, (tuple, list)) and all([el is None for el in masks])):
             # no masks
             max_n_targets = -1
         else:
