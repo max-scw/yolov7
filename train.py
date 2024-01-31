@@ -547,7 +547,8 @@ def train(hyp: Dict[str, float], opt, device):
                 }
 
                 # Save last, best and delete
-                torch.save(ckpt, last)
+                if not opt.save_not_every_epoch:
+                    torch.save(ckpt, last)
                 if best_fitness == fi:
                     torch.save(ckpt, best)
 
@@ -592,7 +593,7 @@ def train(hyp: Dict[str, float], opt, device):
                     batch_size=batch_size * 2,
                     imgsz=imgsz_test,
                     conf_thres=0.001,
-                    iou_thres=0.7,  # FIXME: loss-function ignores IoU => make zero! or adjust loss function
+                    iou_thres=0.7,  # Only for NMS
                     model=attempt_load(m, device).half(),
                     single_cls=opt.single_cls,
                     dataloader=testloader,
@@ -667,10 +668,19 @@ if __name__ == '__main__':
     parser.add_argument("--no-mosaic-augmentation", action='store_true',
                         help="Do not apply mosaic augmentation.")
     parser.add_argument('--masks', action='store_true', help='Models polygons within the bounding boxes.')
+    parser.add_argument('--save-not-every-epoch', action='store_true', help='Does not save every epoch as last.pt')
+    parser.add_argument('--process-title', type=str, default=None, help='Names the process')
 
     opt = parser.parse_args()
 
     print_debug_msg(f"parser opt={opt}")
+
+    if opt.process_title:
+        try:
+            from setproctitle import setproctitle
+            setproctitle(opt.process_title)
+        except Exception as ex:
+            print_debug_msg(f"Process could not be named: {ex}")
 
     # Set DDP variables
     opt.world_size = int(os.environ['WORLD_SIZE']) if 'WORLD_SIZE' in os.environ else 1
