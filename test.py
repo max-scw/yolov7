@@ -33,7 +33,7 @@ def test(
         single_cls: bool = False,
         augment: bool = False,
         verbose: bool = False,
-        opt: dict = None, # TODO: add
+        opt: dict = None,
         model=None,
         dataloader=None,
         save_dir: Union[str, Path] = Path(''),  # for saving images
@@ -49,7 +49,9 @@ def test(
         is_coco: bool = False,
         v5_metric: bool = False
 ):
+    # limits number of examples plotted
     max_n_masks: int = 15
+
     if save_json:
         check_requirements(['pycocotools'])
         process = process_mask_upsample  # more accurate
@@ -88,7 +90,7 @@ def test(
         with open(data) as f:
             data = yaml.load(f, Loader=yaml.SafeLoader)
     check_dataset(data)  # check
-    nc = 1 if single_cls else int(data['nc'])  # number of classes
+    n_classes = 1 if single_cls else int(data['nc'])  # number of classes
     iouv = torch.linspace(0.5, 0.95, 10).to(device)  # iou vector for mAP@0.5:0.95
     niou = iouv.numel()
 
@@ -96,6 +98,7 @@ def test(
     log_imgs = 0
     if wandb_logger and wandb_logger.wandb:
         log_imgs = min(wandb_logger.log_imgs, 100)
+
     # Dataloader
     if not training:
         if device.type != 'cpu':
@@ -112,7 +115,7 @@ def test(
         print("Testing with YOLOv5 AP metric ...")
     
     seen = 0
-    confusion_matrix = ConfusionMatrix(nc=nc)
+    confusion_matrix = ConfusionMatrix(nc=n_classes)
     names = {k: v for k, v in enumerate(model.names if hasattr(model, 'names') else model.module.names)}
     coco91class = coco80_to_coco91_class()
     s = ('%20s' + '%12s' * 6) % ('Class', 'Images', 'Labels', 'P', 'R', 'mAP@.5', 'mAP@.5:.95')
@@ -125,6 +128,13 @@ def test(
         img /= 255.0  # 0 - 255 to 0.0 - 1.0
         targets = targets.to(device)
         batch_size, _, height, width = img.shape  # batch size, channels, height, width
+
+        if masks is None or isinstance(masks, tuple) and all([el is None for el in masks]):
+            # no masks
+            max_n_targets = -1
+        else:
+            # masks
+            max_n_targets = max_n_masks
 
         with torch.no_grad():
             # Run model
@@ -156,13 +166,13 @@ def test(
         plot_masks = []  # masks for plotting
         for si, pred in enumerate(out):
             labels = targets[targets[:, 0] == si, 1:]
-            nl = len(labels)
-            tcls = labels[:, 0].tolist() if nl else []  # target class
+            n_labels = len(labels)
+            tcls = labels[:, 0].tolist() if n_labels else []  # target class
             path = Path(paths[si])
             seen += 1
 
             if len(pred) == 0:
-                if nl:
+                if n_labels:
                     stats.append((torch.zeros(0, niou, dtype=torch.bool), torch.Tensor(), torch.Tensor(), tcls))
                 continue
 
@@ -187,7 +197,7 @@ def test(
                 # add masks to plot
                 pred_masks = torch.as_tensor(pred_masks, dtype=torch.uint8)
                 if plots and i_batch < 3:
-                    plot_masks.append(pred_masks[:max_n_masks].cpu())  # filter top 15 to plot
+                    plot_masks.append(pred_masks[:max_n_targets].cpu())  # filter top 15 to plot
 
             # Predictions
             predn = pred.clone()
@@ -205,11 +215,13 @@ def test(
             # W&B logging - Media Panel Plots
             if len(wandb_images) < log_imgs and wandb_logger.current_epoch > 0:  # Check for test operation
                 if wandb_logger.current_epoch % wandb_logger.bbox_interval == 0:
-                    box_data = [{"position": {"minX": xyxy[0], "minY": xyxy[1], "maxX": xyxy[2], "maxY": xyxy[3]},
-                                 "class_id": int(cls),
-                                 "box_caption": "%s %.3f" % (names[cls], conf),
-                                 "scores": {"class_score": conf},
-                                 "domain": "pixel"} for *xyxy, conf, cls in pred.tolist()]
+                    box_data = [{
+                        "position": {"minX": xyxy[0], "minY": xyxy[1], "maxX": xyxy[2], "maxY": xyxy[3]},
+                        "class_id": int(cls),
+                        "box_caption": "%s %.3f" % (names[cls], conf),
+                        "scores": {"class_score": conf},
+                        "domain": "pixel"
+                    } for *xyxy, conf, cls in pred.tolist()]
                     boxes = {"predictions": {"box_data": box_data, "class_labels": names}}  # inference-space
                     wandb_images.append(wandb_logger.wandb.Image(img[si], boxes=boxes, caption=path.name))
             wandb_logger.log_training_progress(predn, path, names) if wandb_logger and wandb_logger.wandb_run else None
@@ -230,7 +242,7 @@ def test(
 
             # Assign all predictions as incorrect
             correct = torch.zeros(pred.shape[0], niou, dtype=torch.bool, device=device)
-            if nl:
+            if n_labels:
                 detected = []  # target indices
                 tcls_tensor = labels[:, 0]
 
@@ -258,7 +270,7 @@ def test(
                                 detected_set.add(d.item())
                                 detected.append(d)
                                 correct[pi[j]] = ious[j] > iouv  # iou_thres is 1xn
-                                if len(detected) == nl:  # all targets already located in image
+                                if len(detected) == n_labels:  # all targets already located in image
                                     break
 
             # Append statistics (correct, conf, pcls, tcls)
@@ -279,16 +291,16 @@ def test(
             file = save_dir / f'test_batch{i_batch}_pred.jpg'  # predictions
             # im = plot_images(
             #     img,
-            #     output_to_target(out, max_det=max_n_masks),
+            #     output_to_target(out, max_det=max_n_plots),
             #     paths,
             #     file,
             #     names,
             #     masks=torch.cat(plot_masks, dim=0) if len(plot_masks) else None,
-            #     th_conf=0.1
+            #     th_conf=conf_thres
             # )
             Thread(
                 target=plot_images,
-                args=(img, output_to_target(out, max_det=max_n_masks), paths, file, names),
+                args=(img, output_to_target(out, max_det=max_n_targets), paths, file, names),
                 kwargs={
                     "masks": torch.cat(plot_masks, dim=0) if len(plot_masks) else None
                 },
@@ -301,7 +313,7 @@ def test(
         p, r, ap, f1, ap_class = ap_per_class(*stats, plot=plots, v5_metric=v5_metric, save_dir=save_dir, names=names)
         ap50, ap = ap[:, 0], ap.mean(1)  # AP@0.5, AP@0.5:0.95
         mp, mr, map50, map = p.mean(), r.mean(), ap50.mean(), ap.mean()
-        nt = np.bincount(stats[3].astype(np.int64), minlength=nc)  # number of targets per class
+        nt = np.bincount(stats[3].astype(np.int64), minlength=n_classes)  # number of targets per class
     else:
         nt = torch.zeros(1)
 
@@ -310,7 +322,7 @@ def test(
     print(pf % ('all', seen, nt.sum(), mp, mr, map50, map))
 
     # Print results per class
-    if (verbose or (nc < 50 and not training)) and nc > 1 and len(stats):
+    if (verbose or (n_classes < 50 and not training)) and n_classes > 1 and len(stats):
         for i, c in enumerate(ap_class):
             print(pf % (names[c], seen, nt[c], p[i], r[i], ap50[i], ap[i]))
 
@@ -358,7 +370,7 @@ def test(
     if not training:
         s = f"\n{len(list(save_dir.glob('labels/*.txt')))} labels saved to {save_dir / 'labels'}" if save_txt else ''
         print(f"Results saved to {save_dir}{s}")
-    maps = np.zeros(nc) + map
+    maps = np.zeros(n_classes) + map
     for i, c in enumerate(ap_class):
         maps[c] = ap[i]
     return (mp, mr, map50, map, *(loss.cpu() / len(dataloader)).tolist()), maps, t
@@ -389,29 +401,22 @@ if __name__ == '__main__':
     parser.add_argument('--plot', action='store_true', help='Plot predictions on images')
 
     opt = parser.parse_args()
-#    opt.weights = "./trained_models/20231220_YOLOv7tiny_CRU_best.pt"
-#    opt.data = ".\data\CRURotorAssembly.yaml"
-#    opt.task = "test"
-#    opt.conf_thres = 0.7
-#    opt.no_trace = True
 
-    opt.save_json |= opt.data.endswith('coco.yaml')
-    opt.data = check_file(opt.data)  # check file
     print(opt)
-    #check_requirements()
 
+    #check_requirements()
     if opt.task in ('train', 'val', 'test'):  # run normally
-        test(opt.data,
-             opt.weights,
-             opt.batch_size,
-             opt.img_size,
-             opt.conf_thres,
-             opt.iou_thres,
-             opt.save_json,
-             opt.single_cls,
-             opt.augment,
-             opt.verbose,
-             opt = opt,
+        test(data=opt.data,
+             weights=opt.weights,
+             batch_size=opt.batch_size,
+             imgsz=opt.img_size,
+             conf_thres=opt.conf_thres,
+             iou_thres=opt.iou_thres,
+             save_json=opt.save_json,
+             single_cls=opt.single_cls,
+             augment=opt.augment,
+             verbose=opt.verbose,
+             opt=opt,
              save_txt=opt.save_txt | opt.save_hybrid,
              save_hybrid=opt.save_hybrid,
              save_conf=opt.save_conf,

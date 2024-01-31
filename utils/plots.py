@@ -108,7 +108,7 @@ def output_to_target(output: List[torch.Tensor], max_det: int = -1) -> np.ndarra
     # Convert model output to target format [batch_id, class_id, x, y, w, h, conf]
     targets_ = []
     for i, out in enumerate(output):
-        if max_det < 0:
+        if max_det is None or max_det < 0:
             max_det_ = len(out)
         else:
             max_det_ = max_det
