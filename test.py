@@ -129,7 +129,7 @@ def test(
         targets = targets.to(device)
         batch_size, _, height, width = img.shape  # batch size, channels, height, width
 
-        if masks is None or isinstance(masks, tuple) and all([el is None for el in masks]):
+        if masks is None or (isinstance(masks, tuple) and all([el is None for el in masks])):
             # no masks
             max_n_targets = -1
         else:
@@ -197,7 +197,8 @@ def test(
                 # add masks to plot
                 pred_masks = torch.as_tensor(pred_masks, dtype=torch.uint8)
                 if plots and i_batch < 3:
-                    plot_masks.append(pred_masks[:max_n_targets].cpu())  # filter top 15 to plot
+                    prd_msks = pred_masks[:max_n_targets] if max_n_targets > 0 else pred_masks
+                    plot_masks.append(prd_msks.cpu())  # filter top 15 to plot
 
             # Predictions
             predn = pred.clone()
@@ -215,13 +216,15 @@ def test(
             # W&B logging - Media Panel Plots
             if len(wandb_images) < log_imgs and wandb_logger.current_epoch > 0:  # Check for test operation
                 if wandb_logger.current_epoch % wandb_logger.bbox_interval == 0:
-                    box_data = [{
-                        "position": {"minX": xyxy[0], "minY": xyxy[1], "maxX": xyxy[2], "maxY": xyxy[3]},
-                        "class_id": int(cls),
-                        "box_caption": "%s %.3f" % (names[cls], conf),
-                        "scores": {"class_score": conf},
-                        "domain": "pixel"
-                    } for *xyxy, conf, cls in pred.tolist()]
+                    box_data = [
+                        {
+                            "position": {"minX": xyxy[0], "minY": xyxy[1], "maxX": xyxy[2], "maxY": xyxy[3]},
+                            "class_id": int(cls),
+                            "box_caption": "%s %.3f" % (names[cls], conf),
+                            "scores": {"class_score": conf},
+                            "domain": "pixel"
+                        } for *xyxy, conf, cls in pred.tolist()
+                    ]
                     boxes = {"predictions": {"box_data": box_data, "class_labels": names}}  # inference-space
                     wandb_images.append(wandb_logger.wandb.Image(img[si], boxes=boxes, caption=path.name))
             wandb_logger.log_training_progress(predn, path, names) if wandb_logger and wandb_logger.wandb_run else None
@@ -291,7 +294,7 @@ def test(
             file = save_dir / f'test_batch{i_batch}_pred.jpg'  # predictions
             # im = plot_images(
             #     img,
-            #     output_to_target(out, max_det=max_n_plots),
+            #     output_to_target(out, max_det=max_n_targets),
             #     paths,
             #     file,
             #     names,
