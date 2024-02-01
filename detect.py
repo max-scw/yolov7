@@ -12,10 +12,10 @@ from models.experimental import attempt_load
 from utils.datasets import LoadStreams, LoadImages
 from utils.general import check_img_size, check_requirements, check_imshow, non_max_suppression, apply_classifier, \
     scale_coords, xyxy2xywh, strip_optimizer, set_logging, increment_path
-from utils.plots import plot_one_box
+from utils.plots import plot_one_box, color2rgb
 from utils.torch_utils import select_device, load_classifier, time_synchronized, TracedModel
 
-from typing import Union, Tuple, List
+from typing import Union, Tuple, List, Dict
 from utils.debugging import print_debug_msg
 from utils.datasets import letterbox
 
@@ -173,12 +173,13 @@ def detect(opt):
 
 
 class Inference:
-    def __init__(self,
-                 weights: Union[str, Path],
-                 imgsz: int = 640,
-                 device_type: str = "cpu",
-                 colors: List[List] = None
-                 ) -> None:
+    def __init__(
+            self,
+            weights: Union[str, Path],
+            imgsz: int = 640,
+            device_type: str = "cpu",
+            colors: List[Tuple[int, int, int] | str] | Dict[int, Tuple[int, int, int] | str] = None
+    ) -> None:
         # Initialize
         self.device = select_device(device_type)
         self.half = self.device.type != "cpu"  # half precision only supported on CUDA
@@ -195,7 +196,7 @@ class Inference:
         assert self.stride <= 32, f"Maximum stride of the model should be 32 but was {self.stride}."
         self.imgsz = check_img_size(imgsz, s=self.stride)  # check img_size
 
-        self.__colors = colors
+        self.__colormap = colors
 
     @property
     def names(self) -> list:
@@ -206,14 +207,14 @@ class Inference:
         return len(self.names)
 
     @property
-    def colors(self) -> list:
-        if self.__colors is None:
-            self.__colors = [[random.randint(0, 255) for _ in range(3)] for _ in self.names]
-        return self.__colors
+    def colors(self) -> Dict[int, Tuple[int, int, int] | str]:
+        if self.__colormap is None:
+            self.__colormap = [[random.randint(0, 255) for _ in range(3)] for _ in self.names]
+        return self.__colormap
 
     def _prepare_image(self, image: np.ndarray) -> np.ndarray:
         # Padded resize
-        img_pad = letterbox(image, new_shape=self.imgsz, stride=self.stride)[0]
+        img_pad = letterbox(image, new_shape=self.imgsz, stride=self.stride, auto=False)[0]
         # Convert
         img_pad = img_pad[:, :, ::-1].transpose(2, 0, 1)  # bring color channels to front # BGR2RGB
         img_pad = np.ascontiguousarray(img_pad)
@@ -243,16 +244,17 @@ class Inference:
         self._warmed_up = True
         return True
 
-    def predict(self,
-                image: np.ndarray,
-                augment: bool = False,
-                conf_thres: float = 0.25,
-                iou_thres: float = 0.45,
-                agnostic_nms: bool = False,
-                classes_to_filter: int = None,
-                to_list: bool = True,
-                rescale_boxes: bool = True
-                ) -> (torch.Tensor, List[float], List[int]):
+    def predict(
+            self,
+            image: np.ndarray,
+            augment: bool = False,
+            conf_thres: float = 0.25,
+            iou_thres: float = 0.45,
+            agnostic_nms: bool = False,
+            classes_to_filter: int = None,
+            to_list: bool = True,
+            rescale_boxes: bool = True
+            ) -> (torch.Tensor, List[float], List[int]):
         img = self._prepare_image(image)
 
         if not self._warmed_up:
@@ -260,14 +262,23 @@ class Inference:
         # Inference
         t1 = time_synchronized()
         with torch.no_grad():  # Calculating gradients would cause a GPU memory leak
-            pred = self.model(img, augment=augment)[0]
+            pred_, _ = self.model(img, augment=augment)
         t2 = time_synchronized()
 
         # Apply NMS
-        pred = non_max_suppression(pred, conf_thres, iou_thres, classes=classes_to_filter, agnostic=agnostic_nms)
+        n_classes = self.model.n_classes if hasattr(self.model, "n_classes") else self.model.nc
+        pred = non_max_suppression(
+            pred_,
+            conf_thres=conf_thres,
+            iou_thres=iou_thres,
+            classes=classes_to_filter,
+            agnostic=agnostic_nms,
+            n_classes=n_classes
+        )
         t3 = time_synchronized()
 
         # Process detections
+        assert len(pred) == 1
         det = pred[0]  # there is only one image
         info = []
         if len(det):
@@ -300,7 +311,7 @@ class Inference:
                  ) -> bool:
         for xyxy, conf, cls in zip(bbox, scores, classes):
             label = f'{self.names[int(cls)]} {conf:.2f}'
-            color = self.colors[int(cls)]
+            color = color2rgb(self.colors[int(cls)])
             if bgr2rgb:
                 color = [color[2], color[1], color[0]]
             plot_one_box(xyxy, image, label=label, color=color, line_thickness=line_thickness)
@@ -309,59 +320,3 @@ class Inference:
             cv.imshow("YOLOv7 Inference", image)
             cv.waitKey(2)  # 1 millisecond
         return True
-
-
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--weights', nargs='+', type=str, default='yolov7.pt', help='model.pt path(s)')
-    parser.add_argument('--source', type=str, default='inference/images', help='source')  # file/folder, 0 for webcam
-    parser.add_argument('--img-size', type=int, default=640, help='inference size (pixels)')
-    parser.add_argument('--conf-thres', type=float, default=0.25, help='object confidence threshold')
-    parser.add_argument('--iou-thres', type=float, default=0.45, help='IOU threshold for NMS')
-    parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
-    parser.add_argument('--view-img', action='store_true', help='display results')
-    parser.add_argument('--save-txt', action='store_true', help='save results to *.txt')
-    parser.add_argument('--save-conf', action='store_true', help='save confidences in --save-txt labels')
-    parser.add_argument('--nosave', action='store_true', help='do not save images/videos')
-    parser.add_argument('--classes', nargs='+', type=int, help='filter by class: --class 0, or --class 0 2 3')
-    parser.add_argument('--agnostic-nms', action='store_true', help='class-agnostic NMS')
-    parser.add_argument('--augment', action='store_true', help='augmented inference')
-    parser.add_argument('--update', action='store_true', help='update all models')
-    parser.add_argument('--project', default='runs/detect', help='save results to project/name')
-    parser.add_argument('--name', default='exp', help='save results to project/name')
-    parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
-    parser.add_argument('--no-trace', action='store_true', help='don`t trace model')
-    opt = parser.parse_args()
-    print(opt)
-
-    # with torch.no_grad():
-    #     if opt.update:  # update all models (to fix SourceChangeWarning)
-    #         for opt.weights in ['yolov7.pt']:
-    #             detect(opt)
-    #             strip_optimizer(opt.weights)
-    #     else:
-    #         detect(opt)
-
-
-
-    img_size = 640
-    stride = 32
-    # read file pointing to testing data
-    with open("Tst.txt", "r") as fid:
-        lines = fid.readlines()
-    # convert relevant paths to pathlib object
-    images = [Path(ln.strip("\n")) for ln in lines if len(ln) > 5]
-
-    print("____class____")
-    mdl = Inference(weights=Path("trained_models") / "2023-03-28_tiny-yolov7-CNN4VIAB640x640-scratch.pt",
-                    imgsz=img_size,
-                    # colors=[[45, 66, 117], [40, 185, 218]]
-                    )
-    for p2img in images:
-        # read one image
-        img = cv.imread(p2img.as_posix(), cv.IMREAD_COLOR)
-        x = mdl.predict(img, conf_thres=0.65)
-
-        mdl.plot_box(img.copy(), *x, show_img=True, bgr2rgb=True)
-        cv.waitKey(5)  # 1 millisecond
-        break

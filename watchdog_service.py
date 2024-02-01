@@ -34,18 +34,20 @@ class Watchmen:
 
 
 class Handler(FileSystemEventHandler):
-    def __init__(self,
-                 path_to_weights: Union[str, Path],
-                 image_size2display: int = 1020,
-                 th_score: float = 0.5,
-                 th_iou: float = 0.5,
-                 class_colors: List[Tuple[int, int, int]] = None,
-                 path_to_result_log: Union[str, Path] = None
-                 ):
-        self.model = Inference(weights=path_to_weights,
-                               imgsz=image_size2display,
-                               colors=class_colors,
-                               )
+    def __init__(
+            self,
+            path_to_weights: Union[str, Path],
+            image_size2display: int = 1020,
+            th_score: float = 0.5,
+            th_iou: float = 0.5,
+            class_colors: List[Tuple[int, int, int]] = None,
+            path_to_result_log: Union[str, Path] = None
+    ) -> None:
+        self.model = Inference(
+            weights=path_to_weights,
+            imgsz=image_size2display,
+            colors=class_colors,
+        )
 
         self.image_size2display = image_size2display
         self.th_score = th_score
@@ -71,7 +73,7 @@ class Handler(FileSystemEventHandler):
                 Path(p2img).unlink()
 
             print(f"Watchdog received created event - {event_path.as_posix()}")
-            if event_path.suffix not in [".bmp", ".jpg", ".png"]:
+            if event_path.suffix not in [".bmp", ".jpg", ".png", ".tiff"]:
                 return None
             # sleep to allow the system do free the resource
             time.sleep(0.1)
@@ -99,21 +101,34 @@ if __name__ == "__main__":
     parser.add_argument('--img-size', type=int, default=640, help='Size of displayed image (in pixels)')
     parser.add_argument('--conf-thres', type=float, default=0.45, help='Object confidence threshold')
     parser.add_argument('--iou-thres', type=float, default=0.55, help='IOU threshold for NMS')
-    parser.add_argument('--folder', type=str, default='ftp', help='Path to folder that should be watched for any changes')
+    parser.add_argument('--folder', type=str, default='ftp',
+                        help='Path to folder that should be watched for any changes')
+    parser.add_argument('--class-colors', type=str, default='',
+                        help='Path to text file that lists the colors for each class.')
+    parser.add_argument('--interval', type=float, default=0.5,
+                        help='Time interval to check for new files in seconds.')
 
     opt = parser.parse_args()
 
     print(opt)
 
-    time_interval_s = 0.5  # second
+    if Path(opt.class_colors).is_file():
+        with open(opt.class_colors, "r") as fid:
+            lines = fid.readlines()
 
-    event_handler_obj = Handler(path_to_weights=opt.weights,
-                                image_size2display=opt.img_size,
-                                th_score=opt.conf_thres,
-                                th_iou=opt.iou_thres,
-                                # class_colors=[(137, 186, 23)] + [(255, 0, 0)] * 3, # (192, 0, 0)
-                                path_to_result_log="results.log"
-                                )
-    watch = Watchmen(Path(opt.folder), event_handler_obj, time_interval_s)
+        class_colors = [ln.strip() for ln in lines]
+        print(f"Class colors: {class_colors}")
+    else:
+        class_colors = None
+
+    event_handler_obj = Handler(
+        path_to_weights=opt.weights,
+        image_size2display=opt.img_size,
+        th_score=opt.conf_thres,
+        th_iou=opt.iou_thres,
+        class_colors=class_colors,
+        path_to_result_log="results.log"
+    )
+    watch = Watchmen(Path(opt.folder), event_handler_obj, opt.interval)
     print("run watchdog...")
     watch.run()
