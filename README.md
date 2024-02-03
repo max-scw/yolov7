@@ -86,8 +86,10 @@ Tested on Python 3.9 - 3.11 with [PyTorch](https://pytorch.org/). 1.3,  2.1, and
 You can train a network with [train.py](./train.py) -- so far so obvious.
 Example call:
 ````shell
-python train.py --device 'cpu' --batch-size 16 --data data/myYOLO.yaml --img 640 640 --cfg cfg/training/yolov7.yaml --weights 'yolov7_training.pt' --name my-yolov7 --hyp data/hyp.scratch.custom.yaml --epochs 300 --adam
+python train.py --device 0 --batch-size 32 --data data/myYOLO.yaml --img 640 640 --cfg cfg/training/yolov7-tiny.yaml --weights 'yolov7-tiny.pt' --name my-tiny-yolov7 --hyp data/hyp.tiny.yaml --epochs 1000 --adam --save_period 2000 --save-best-n-checkpoints 5
 ````
+![Screencast of training start](docs%2Fscreencast_train.gif)
+
 This also provides already trained weights [`yolov7_training.pt`](https://github.com/WongKinYiu/yolov7/releases/download/v0.1/yolov7_training.pt) on the [MS COCO](https://cocodataset.org/) dataset (**transfer learning**). Note that one should first train the head of the model if the head differs from the pre-trained dataset (e.g. different number of classes.) For this, freeze the body and train the network for some epochs `python train.py --freeze 60 ...` (check for how many layers the weights were transferred. This is printed on the console when setting up the network. For a *tiny YOLOv7* I have godf experiences with freezing the first 75 layers.)
 Afterward, run the training a second time without freezing the layers and use the final weights of the previous run as input. This **fine-tuning** very much likely further improves accuracy. This two-stage training should require less than 1/10 of the time of training the model from only partly matching weights (doing transfer learning with a random head) and of course much less than training everything from scratch.
 
@@ -168,12 +170,6 @@ options:
                         Names the process
 ```
 
-![screencast_train.mp4](docs%2Fscreencast_train.mp4)
-
-<video width="320" height="180" controls>
-  <source src="docs/screencast_train.mp4" type="video/mp4">
- <p>Screencast of training start</p>
-</video>
 
 There are some extensions, e.g. for limiting the number of checkpoints to be stored (in order to avoid good old storage overflow) with `--save-best-n-checkpoints`. 
 If you train on a dataset with only a few hundred examples, the number of epochs is usually much larger, thus cluttering the hard drive with checkpoints actually is a thread.
