@@ -18,6 +18,8 @@ Provide [hyperparameters](####Hyperparameters) with `--hyp ./data/hyp.tiny.yaml`
 [Data](##Data) is stored in a file like [myYOLO.yaml](data%2FmyYOLO.yaml) or [coco.yaml](data%2Fcoco.yaml) that stores the number of classes, their names and points to the dataset files for training, validation, and testing which eventually point to the images.
 Use `--data data/myYOLO.yaml` to hand it over.
 
+Use a pretrained weights with `--weights yolov7.pt`, e.g. for [YOLOv7](https://github.com/WongKinYiu/yolov7/releases/download/v0.1/yolov7.pt) or [YOLOv7-tiny](https://github.com/WongKinYiu/yolov7/releases/download/v0.1/yolov7-tiny.pt) pretrained on [MS COCO](https://cocodataset.org/).
+
 See the respective sections for details in [Training](###Training).
 
 
@@ -28,9 +30,47 @@ See the respective sections for details in [Training](###Training).
 To explore the "bag of freebies" (i.e. the hyperparameters), an  evolution-inspired search is started (well, a grid search would indeed be exhaustive.)
 
 ### project structure
- TODO
-
-
+ ````
+ YOLOv7
++-- cfg  # model architectures
+   +-- baseline  # configuration of reference models
+   +-- deploy  # the same as +-- training
+   +-- training  # holds the model configurations
+       |-- yolo7.yaml  # model configuration
+       |-- yolo7-tiny.yaml  # model configuration
++-- data  # configurations for individual use cases
+   |-- augmentation-yolov7.yaml  # augmentation configuration
+   |-- coco.yaml  # dataset configuration for MS COCO dataset
+   |-- hyp.scratch.custom.yaml  # default hyperparameters to train YOLOv7 from scratch
+   |-- hyp.tiny.yaml  # default hyperparameters for tiny YOLOv7
+   |-- myYOLO.yaml  # exemplary dataset configuration for custom dataset
++-- (dataset)  # you may want to hold all data here
+   +-- (MyDataSet)  # use case 1
+      +-- (data)
+         |-- (Image1.jpg)  # image
+         |-- (Image1.txt)  # label
+         |-- ...
+      |-- (Trn.txt)  # lists path to images for training,
+      |-- (Tst.txt)  # ... for testing,
+      |-- (Val.txt)  # ... for validation. File names must match with data/myYOLO.yaml. train.py creates cache files here.
++-- docs  # holds images to illustrate README files
++-- models  # module to build the PyTorch model by parsing a YAML file above
++-- (runs)  # stores results of training and testing calls. Created automatically
+   +-- (train)
+      +-- (NAME)  # named folder per call
+         +-- (weights)  # checkpoints and weights
+            |-- best.pt  # best model weights (is checkpoint while training and reduced to weights only when finished)
++-- utils  # helper functions, e.g. for loss, augmentation or plotting
++-- VisualizationTools  # minimal code to create videos
+|-- augment_validation_set.py  # applies data augmentation to validation set. Only use if dataset is very very small
+|-- detect.py  # inference
+|-- export.py  # export to ONNX for deployment
+|-- hubconf.py  # PyTorch hub see original implementation
+|-- requirements.txt  pip requirements
+|-- test.py  # call for evaluation
+|-- train.py  # trains the model
+|-- watchdog_service.py
+````
 
 
 ## Installation
