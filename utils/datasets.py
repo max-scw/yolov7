@@ -33,7 +33,6 @@ from utils.general import (
 )
 from utils.torch_utils import torch_distributed_zero_first
 from utils.debugging import print_debug_msg
-from utils.segment import augmentations as segaug   # TODO: check code from mask branch
 
 from utils.augmentation import build_augmentation_pipeline
 

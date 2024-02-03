@@ -2,7 +2,6 @@ from pathlib import Path
 import yaml
 import re
 from ast import literal_eval
-import logging
 
 import albumentations as A
 import albumentations  # for eval()
