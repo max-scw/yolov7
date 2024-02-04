@@ -90,7 +90,7 @@ python train.py --device 0 --batch-size 32 --data data/myYOLO.yaml --img 640 640
 ````
 ![Screencast of training start](docs%2Fscreencast_train.gif)
 
-This also provides already trained weights [`yolov7_training.pt`](https://github.com/WongKinYiu/yolov7/releases/download/v0.1/yolov7_training.pt) on the [MS COCO](https://cocodataset.org/) dataset (**transfer learning**). Note that one should first train the head of the model if the head differs from the pre-trained dataset (e.g. different number of classes.) For this, freeze the body and train the network for some epochs `python train.py --freeze 60 ...` (check for how many layers the weights were transferred. This is printed on the console when setting up the network. For a *tiny YOLOv7* I have godf experiences with freezing the first 75 layers.)
+This also provides already trained weights [`yolov7_training.pt`](https://github.com/WongKinYiu/yolov7/releases/download/v0.1/yolov7_training.pt) on the [MS COCO](https://cocodataset.org/) dataset (**transfer learning**). Note that one should first train the head of the model if the head differs from the pre-trained dataset (e.g. different number of classes.) For this, freeze the body and train the network for some epochs `python train.py --freeze 60 ...` (check for how many layers the weights were transferred. This is printed on the console when setting up the network. For a *tiny YOLOv7* I have good experiences with freezing the first 75 layers.)
 Afterward, run the training a second time without freezing the layers and use the final weights of the previous run as input. This **fine-tuning** very much likely further improves accuracy. This two-stage training should require less than 1/10 of the time of training the model from only partly matching weights (doing transfer learning with a random head) and of course much less than training everything from scratch.
 
 
@@ -210,6 +210,8 @@ albumentations:
 One can specify the probability of every transformation explicitly (`p: 0.5`) or set as global variable either in the hyperparameters (e.g. [data/hyp.tiny.yaml](data%2Fhyp.tiny.yaml)) or via `--augmentation-probability`. Take in mind that the probability applies to every transformation independently, i.e. the more transformations there are, the lower can (and should) be the transformation probability in oder to not completely distort the image.
 The original YOLOv7 uses only few transformation from the albumentations package with only a very small probability (`--augmentation-probability=0.05`). But they used on the [MS COCO](https://cocodataset.org/) dataset with millions of images. If you have much fewer images (let's say only a couple of hundred), you should use more transformations and a little higher probability (I like 0.1-0.25 for the example config in [data/augmentation-yolov7.yaml](data%2Faugmentation-yolov7.yaml).)
 
+![augmentation.gif](docs%2Faugmentation.gif)
+
 (*Note*: the native vertical and horizontal flip in YOLOv7 was deactivated for consistency. Therese two hyperparameters no longer have an effect. The other augmentations newly introduced by YOLO such as *mosaic*, *mixup*, *paste-in*, and *perspective* are kept and apply on top of the albumentations transformation.)
 
 ### Inference
@@ -229,6 +231,8 @@ I've added a little watchdog system that runs the model every time a new image i
 ``` shell
 python watchdog_service.py --weights best.pt --conf-thres 0.25 --img-size 640 --folder <path to folder>
 ```
+![watchdog.gif](docs%2Fwatchdog.gif)
+
 The script is a simple infinite loop looking for newly created files in a folder and otherwise `sleep`s for a given time.
 Use the `--class-colors` and `--interval` arguments to specify the colors of the bounding boxes and the time interval in which the watchdog should look for new files-
 
