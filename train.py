@@ -74,7 +74,7 @@ def train(hyp: Dict[str, float], opt, device):
     with open(save_dir / 'opt.yaml', 'w') as fid:
         yaml.dump(vars(opt), fid, sort_keys=False)
     if Path(opt.augmentation_config).is_file():
-        shutil.copy(opt.augmentation_config, save_dir / Path(opt.augmentation_config).name)
+        shutil.copyfile(opt.augmentation_config, save_dir / Path(opt.augmentation_config).name)
 
     # Configure
     plots = not opt.evolve  # create plots
@@ -652,7 +652,7 @@ if __name__ == '__main__':
     parser.add_argument('--quad', action='store_true', help='quad dataloader')
     parser.add_argument('--linear-lr', action='store_true', help='linear LR')
     parser.add_argument('--label-smoothing', type=float, default=0.0, help='Label smoothing epsilon')
-    parser.add_argument('--save_period', type=int, default=-1, help='Log model after every "save_period" epoch')
+    parser.add_argument('--save-period', type=int, default=-1, help='Log model after every "save-period" epoch')
     parser.add_argument('--save-best-n-checkpoints', type=int, default=-1,
                         help='How many checkpoints should be saved at most?')
     parser.add_argument('--freeze', nargs='+', type=int, default=[0],
