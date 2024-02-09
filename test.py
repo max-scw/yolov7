@@ -33,7 +33,7 @@ def test(
         single_cls: bool = False,
         augment: bool = False,
         verbose: bool = False,
-        opt: dict = None,
+        opt = None,
         model=None,
         dataloader=None,
         save_dir: Union[str, Path] = Path(''),  # for saving images
@@ -280,35 +280,35 @@ def test(
             stats.append((correct.cpu(), pred[:, 4].cpu(), pred[:, 5].cpu(), tcls))
 
         # Plot images
-        if plots and i_batch < opt.n_batches_to_plot:
+        if plots and i_batch < (opt.n_batches_to_plot if hasattr(opt, "n_batches_to_plot") else 3):
             # plot ground truth
-            file = save_dir / f'test_batch{i_batch}_labels.jpg'  # labels
-            Thread(
-                target=plot_images,
-                args=(img, targets, paths, file, names),
-                kwargs={"masks": masks},
-                daemon=True
-            ).start()
+            # file = save_dir / f'test_batch{i_batch}_labels.jpg'  # labels
+            # Thread(
+            #     target=plot_images,
+            #     args=(img, targets, paths, file, names),
+            #     kwargs={"masks": masks},
+            #     daemon=True
+            # ).start()
 
             # plot prediction
             file = save_dir / f'test_batch{i_batch}_pred.jpg'  # predictions
-            # im = plot_images(
-            #     img,
-            #     output_to_target(out, max_det=max_n_targets),
-            #     paths,
-            #     file,
-            #     names,
-            #     masks=torch.cat(plot_masks, dim=0) if len(plot_masks) else None,
-            #     th_conf=conf_thres
-            # )
-            Thread(
-                target=plot_images,
-                args=(img, output_to_target(out, max_det=max_n_targets), paths, file, names),
-                kwargs={
-                    "masks": torch.cat(plot_masks, dim=0) if len(plot_masks) else None
-                },
-                daemon=True
-            ).start()
+            im = plot_images(
+                img,
+                output_to_target(out, max_det=max_n_targets),
+                paths,
+                file,
+                names,
+                masks=torch.cat(plot_masks, dim=0) if len(plot_masks) else None,
+                th_conf=conf_thres
+            )
+            # Thread(
+            #     target=plot_images,
+            #     args=(img, output_to_target(out, max_det=max_n_targets), paths, file, names),
+            #     kwargs={
+            #         "masks": torch.cat(plot_masks, dim=0) if len(plot_masks) else None
+            #     },
+            #     daemon=True
+            # ).start()
 
     # Compute statistics
     stats = [np.concatenate(x, 0) for x in zip(*stats)]  # to numpy
