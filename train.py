@@ -30,7 +30,7 @@ from utils.autoanchor import check_anchors
 from utils.datasets_segments import create_dataloader
 from utils.general import (labels_to_class_weights, increment_path, labels_to_image_weights, init_seeds,
                            strip_optimizer, get_latest_run, check_dataset, check_file, check_img_size,
-                           print_mutation, set_logging, one_cycle, colorstr)
+                           print_mutation, set_logging, one_cycle, colorstr, set_process_title)
 from utils.metrics import fitness
 from utils.google_utils import attempt_download
 from utils.loss import ComputeLoss, ComputeLossOTA
@@ -676,11 +676,7 @@ if __name__ == '__main__':
     print_debug_msg(f"parser opt={opt}")
 
     if opt.process_title:
-        try:
-            from setproctitle import setproctitle
-            setproctitle(opt.process_title)
-        except Exception as ex:
-            print_debug_msg(f"Process could not be named: {ex}")
+        set_process_title(opt.process_title)
 
     # Set DDP variables
     opt.world_size = int(os.environ['WORLD_SIZE']) if 'WORLD_SIZE' in os.environ else 1

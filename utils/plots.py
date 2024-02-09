@@ -152,7 +152,7 @@ def plot_images(
         max_subplots: int = 16,
         aspect_ratio: float = 5 / 4,
         masks: List[torch.Tensor] = None,  #Union[torch.Tensor, np.ndarray]
-        th_conf: float = 0.25 # confidence threshold to supress plotting an element (box or mask)
+        th_conf: float = 0.25,  # confidence threshold to supress plotting an element (box or mask)
 ) -> np.ndarray:
     # Plot image grid with labels
     if isinstance(images, torch.Tensor):
@@ -162,15 +162,12 @@ def plot_images(
     if isinstance(masks, torch.Tensor):
         masks = masks.cpu().numpy().astype(int)
 
-
-
-
     # un-normalise
     if np.max(images[0]) <= 1:
         images *= 255
 
-    tl = 3  # line thickness
-    tf = max(tl - 1, 1)  # font thickness
+    thickness_line = 3  # line thickness
+    thickness_font = max(thickness_line - 1, 1)  # font thickness
     batch_sz, _, h, w = images.shape  # batch size, _, height, width
     batch_sz = min(batch_sz, max_subplots)  # limit plot images
 
@@ -231,7 +228,7 @@ def plot_images(
                 if labels or conf[j] > th_conf:  # 0.25 conf thresh
                     # plot single box
                     label = '%s' % cls if labels else '%s %.1f' % (cls, conf[j])
-                    plot_one_box(box, mosaic, label=label, color=color, line_thickness=tl)
+                    plot_one_box(box, mosaic, label=label, color=color, line_thickness=thickness_line)
                     # TODO: plot mask (in same color)
 
             # Plot masks
@@ -268,8 +265,8 @@ def plot_images(
         # Draw image filename labels
         if paths:
             label = Path(paths[i]).name[:40]  # trim to 40 char
-            t_size = cv2.getTextSize(label, 0, fontScale=tl / 3, thickness=tf)[0]
-            cv2.putText(mosaic, label, (block_x + 5, block_y + t_size[1] + 5), 0, tl / 3, [220, 220, 220], thickness=tf,
+            t_size = cv2.getTextSize(label, 0, fontScale=thickness_line / 3, thickness=thickness_font)[0]
+            cv2.putText(mosaic, label, (block_x + 5, block_y + t_size[1] + 5), 0, thickness_line / 3, [220, 220, 220], thickness=thickness_font,
                         lineType=cv2.LINE_AA)
 
         # Image border

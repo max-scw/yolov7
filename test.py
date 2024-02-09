@@ -13,7 +13,7 @@ from models.experimental import attempt_load
 # from utils.datasets import create_dataloader
 from utils.datasets_segments import create_dataloader
 from utils.general import coco80_to_coco91_class, check_dataset, check_file, check_img_size, check_requirements, \
-    box_iou, non_max_suppression, scale_coords, xyxy2xywh, xywh2xyxy, set_logging, increment_path, colorstr
+    box_iou, non_max_suppression, scale_coords, xyxy2xywh, xywh2xyxy, set_logging, increment_path, colorstr, set_process_title
 from utils.general_mask import mask_iou, process_mask, process_mask_upsample, scale_masks
 from utils.metrics import ap_per_class, ConfusionMatrix
 from utils.plots import plot_images, output_to_target, plot_study_txt
@@ -280,7 +280,7 @@ def test(
             stats.append((correct.cpu(), pred[:, 4].cpu(), pred[:, 5].cpu(), tcls))
 
         # Plot images
-        if plots and i_batch < 3:
+        if plots and i_batch < opt.n_batches_to_plot:
             # plot ground truth
             file = save_dir / f'test_batch{i_batch}_labels.jpg'  # labels
             Thread(
@@ -349,8 +349,8 @@ def test(
         anno_json = './coco/annotations/instances_val2017.json'  # annotations json
         pred_json = str(save_dir / f"{w}_predictions.json")  # predictions json
         print('\nEvaluating pycocotools mAP... saving %s...' % pred_json)
-        with open(pred_json, 'w') as f:
-            json.dump(jdict, f)
+        with open(pred_json, 'w') as fid:
+            json.dump(jdict, fid)
 
         try:  # https://github.com/cocodataset/cocoapi/blob/master/PythonAPI/pycocoEvalDemo.ipynb
             from pycocotools.coco import COCO
@@ -402,31 +402,38 @@ if __name__ == '__main__':
     parser.add_argument('--no-trace', action='store_true', help='don`t trace model')
     parser.add_argument('--v5-metric', action='store_true', help='assume maximum recall as 1.0 in AP calculation')
     parser.add_argument('--plot', action='store_true', help='Plot predictions on images')
+    parser.add_argument("--n-batches-to-plot", type=int, default=3,
+                        help="Number of batches to plot if --plot is set.")
+    parser.add_argument('--process-title', type=str, default=None, help='Names the process')
 
     opt = parser.parse_args()
 
     print(opt)
 
+    if opt.process_title:
+        set_process_title(opt.process_title)
+
     #check_requirements()
     if opt.task in ('train', 'val', 'test'):  # run normally
-        test(data=opt.data,
-             weights=opt.weights,
-             batch_size=opt.batch_size,
-             imgsz=opt.img_size,
-             conf_thres=opt.conf_thres,
-             iou_thres=opt.iou_thres,
-             save_json=opt.save_json,
-             single_cls=opt.single_cls,
-             augment=opt.augment,
-             verbose=opt.verbose,
-             opt=opt,
-             save_txt=opt.save_txt | opt.save_hybrid,
-             save_hybrid=opt.save_hybrid,
-             save_conf=opt.save_conf,
-             trace=not opt.no_trace,
-             v5_metric=opt.v5_metric,
-             plots=opt.plot
-             )
+        test(
+            data=opt.data,
+            weights=opt.weights,
+            batch_size=opt.batch_size,
+            imgsz=opt.img_size,
+            conf_thres=opt.conf_thres,
+            iou_thres=opt.iou_thres,
+            save_json=opt.save_json,
+            single_cls=opt.single_cls,
+            augment=opt.augment,
+            verbose=opt.verbose,
+            opt=opt,
+            save_txt=opt.save_txt | opt.save_hybrid,
+            save_hybrid=opt.save_hybrid,
+            save_conf=opt.save_conf,
+            trace=not opt.no_trace,
+            v5_metric=opt.v5_metric,
+            plots=opt.plot
+        )
 
     elif opt.task == 'speed':  # speed benchmarks
         for w in opt.weights:
