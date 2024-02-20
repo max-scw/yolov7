@@ -48,7 +48,8 @@ def create_dataloader(
         n_keypoints: int = None,
         predict_masks: bool = False,
         downsample_ratio=1,
-        overlap: bool = False
+        overlap: bool = False,
+        shuffle: bool = False
 ):
     # Make sure only the first process in DDP process the dataset first, and the following others can use the cache
     with torch_distributed_zero_first(rank):
@@ -69,7 +70,8 @@ def create_dataloader(
             "augmentation_config": augmentation_config,
             "augmentation_probability": global_augmentation_probability,
             "mosaic_augmentation": mosaic_augmentation,
-            "n_keypoints": n_keypoints
+            "n_keypoints": n_keypoints,
+            "shuffle": shuffle
         }
 
         if predict_masks:
@@ -109,7 +111,9 @@ class LoadImagesAndLabelsWithMasks(LoadImagesAndLabels):  # for training/testing
         self.overlap = kwargs["overlap"] if "overlap" in kwargs else False
 
     def __getitem__(self, index):
-        index = self.indices[index]  # linear, shuffled, or image_weights
+        if index == 0 and self.shuffle:
+            random.shuffle(self.indices)
+        index_ = self.indices[index]  # linear, shuffled, or image_weights
 
         hyp = self.hyp
         mosaic = self.mosaic and random.random() < hyp['mosaic']
@@ -118,7 +122,7 @@ class LoadImagesAndLabelsWithMasks(LoadImagesAndLabels):  # for training/testing
         is_rel_coords = True
         if mosaic:
             # Load mosaic
-            img, labels, segments = self.load_mosaic(index)
+            img, labels, segments = self.load_mosaic(index_)
             shapes = None
             # TODO: integrate masks
 
@@ -127,17 +131,17 @@ class LoadImagesAndLabelsWithMasks(LoadImagesAndLabels):  # for training/testing
                 img, labels, segments = segaug.mixup(img, labels, segments, *self.load_mosaic(random.randint(0, self.n - 1)))
         else:
             # Load image
-            img, (h0, w0), (h, w) = load_image(self, index)
+            img, (h0, w0), (h, w) = load_image(self, index_)
             # image, original (h, w), resized (h, w)
 
             # Letterbox
-            shape = self.batch_shapes[self.batch[index]] if self.rect else self.img_size  # final letterboxed shape
+            shape = self.batch_shapes[self.batch[index_]] if self.rect else self.img_size  # final letterboxed shape
             img, ratio, pad = letterbox(img, shape, auto=False, scaleup=self.augment)
             shapes = (h0, w0), ((h / h0, w / w0), pad)  # for COCO mAP rescaling
 
-            labels = self.labels[index].copy()
+            labels = self.labels[index_].copy()
             # [array, array, ....], array.shape=(num_points, 2), xyxyxyxy
-            segments = self.segments[index].copy()
+            segments = self.segments[index_].copy()
             if len(segments):
                 # normalized segment points to absolute pixels
                 for i_s in range(len(segments)):
@@ -240,7 +244,7 @@ class LoadImagesAndLabelsWithMasks(LoadImagesAndLabels):  # for training/testing
         img = img.transpose((2, 0, 1))[::-1]  # HWC to CHW, BGR to RGB
         img = np.ascontiguousarray(img)
 
-        path = self.img_files[index]
+        path = self.img_files[index_]
 
         return torch.from_numpy(img), labels_out, path, shapes, masks
 

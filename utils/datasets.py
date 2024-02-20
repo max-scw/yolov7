@@ -412,7 +412,8 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
             augmentation_probability: float = None,
             mosaic_augmentation: bool = True,
             n_keypoints: int = None,
-            annotation_type: str = "bbox"
+            annotation_type: str = "bbox",
+            shuffle: bool = False
             ):
         self.img_size = img_size
         self.augment = augment
@@ -425,6 +426,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         self.mosaic_border = [-img_size // 2, -img_size // 2]
         self.stride = stride
         self.path_data_info = Path(path_to_data_info)
+        self.shuffle = shuffle
 
         # set augmentation functions by the python package albumentations
         if self.augment and augmentation_config:
@@ -505,7 +507,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         nb = bi[-1] + 1  # number of batches
         self.batch = bi  # batch index of image
         self.n = n_images
-        self.indices = range(n_images)
+        self.indices = list(range(n_images))
 
         # Rectangular Training
         if self.rect:
@@ -658,7 +660,10 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         return len(self.img_files)
 
     def __getitem__(self, index):
-        index = self.indices[index]  # linear, shuffled, or image_weights
+        if index == 0 and self.shuffle:
+            random.shuffle(self.indices)
+        index_ = self.indices[index]  # linear, shuffled, or image_weights
+
 
         hyp = self.hyp
         mosaic = self.mosaic and random.random() < hyp['mosaic']
@@ -667,9 +672,9 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         if mosaic:
             # Load mosaic
             if random.random() < 0.8:
-                img, labels = load_mosaic(self, index)
+                img, labels = load_mosaic(self, index_)
             else:
-                img, labels = load_mosaic9(self, index)
+                img, labels = load_mosaic9(self, index_)
             shapes = None
 
 
@@ -684,14 +689,14 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                 labels = np.concatenate((labels, labels2), 0)
         else:
             # Load image
-            img, (h0, w0), (h, w) = load_image(self, index)
+            img, (h0, w0), (h, w) = load_image(self, index_)
 
             # Letterbox
-            shape = self.batch_shapes[self.batch[index]] if self.rect else self.img_size  # final letterboxed shape
+            shape = self.batch_shapes[self.batch[index_]] if self.rect else self.img_size  # final letterboxed shape
             img, ratio, pad = letterbox(img, shape, auto=False, scaleup=self.augment)
             shapes = (h0, w0), ((h / h0, w / w0), pad)  # for COCO mAP rescaling
 
-            labels = self.labels[index].copy()
+            labels = self.labels[index_].copy()
             if labels.size:  # normalized xywh to pixel xyxy format
                 labels = self.transform_to_absolute_coordinates(labels, ratio[0] * w, ratio[1] * h, padw=pad[0], padh=pad[1])
 
@@ -754,7 +759,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         img = img[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3x416x416
         img = np.ascontiguousarray(img)
 
-        path = self.img_files[index]
+        path = self.img_files[index_]
 
         return torch.from_numpy(img), labels_out, path, shapes, masks
 

@@ -285,7 +285,7 @@ def train(hyp: Dict[str, float], opt, device):
         n_keypoints=n_keypoints,
         predict_masks=opt.masks,
         # mask_downsample_ratio,
-        # shuffle
+        shuffle=True
     )
     mlc = np.concatenate(dataset.labels, 0)[:, 0].max()  # max label class
     n_batches = len(dataloader)  # number of batches
@@ -301,11 +301,12 @@ def train(hyp: Dict[str, float], opt, device):
             rank=-1,
             world_size=opt.world_size,
             workers=opt.workers,
-            pad=0.5,
+            # pad=0.5,
             prefix=colorstr('val: '),
             augment=False,
             n_keypoints=n_keypoints,
-            predict_masks=opt.masks
+            predict_masks=opt.masks,
+            shuffle=False
         )
 
         if not opt.resume:
@@ -357,7 +358,7 @@ def train(hyp: Dict[str, float], opt, device):
     # save initial checkpoint
     torch.save(model, wdir / 'init.pt')
 
-    for i_epoch in range(start_epoch, epochs):  # epoch ------------------------------------------------------------------
+    for i_epoch in range(start_epoch, epochs):  # epoch --------------------------------------------------------------
         # put model in training mode
         model.train()
 
