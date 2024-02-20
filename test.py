@@ -104,12 +104,14 @@ def test(
         if device.type != 'cpu':
             model(torch.zeros(1, 3, imgsz, imgsz).to(device).type_as(next(model.parameters())))  # run once
         task = opt.task if opt.task in ('train', 'val', 'test') else 'val'  # path to train/val/test images
-        dataloader = create_dataloader(
+        dataloader, _ = create_dataloader(
             data[task], imgsz, batch_size, gs, opt,
             pad=0.5,
             rect=True,
-            prefix=colorstr(f'{task}: ')
-        )[0]
+            prefix=colorstr(f'{task}: '),
+            overlap=overlap,
+            augment=False
+        )
 
     if v5_metric:
         print("Testing with YOLOv5 AP metric ...")
@@ -118,11 +120,11 @@ def test(
     confusion_matrix = ConfusionMatrix(nc=n_classes)
     names = {k: v for k, v in enumerate(model.names if hasattr(model, 'names') else model.module.names)}
     coco91class = coco80_to_coco91_class()
-    s = ('%20s' + '%12s' * 6) % ('Class', 'Images', 'Labels', 'P', 'R', 'mAP@.5', 'mAP@.5:.95')
+    desc = ('%20s' + '%12s' * 6) % ('Class', 'Images', 'Labels', 'P', 'R', 'mAP@.5', 'mAP@.5:.95')
     p, r, f1, mp, mr, map50, map, t0, t1 = 0., 0., 0., 0., 0., 0., 0., 0., 0.
     loss = torch.zeros(4, device=device)
     jdict, stats, ap, ap_class, wandb_images = [], [], [], [], []
-    for i_batch, (img, targets, paths, shapes, masks) in enumerate(tqdm(dataloader, desc=s)):
+    for i_batch, (img, targets, paths, shapes, masks) in enumerate(tqdm(dataloader, desc=desc)):
         img = img.to(device, non_blocking=True)
         img = img.half() if half else img.float()  # uint8 to fp16/32
         img /= 255.0  # 0 - 255 to 0.0 - 1.0
@@ -282,33 +284,36 @@ def test(
         # Plot images
         if plots and i_batch < (opt.n_batches_to_plot if hasattr(opt, "n_batches_to_plot") else 3):
             # plot ground truth
-            # file = save_dir / f'test_batch{i_batch}_labels.jpg'  # labels
-            # Thread(
-            #     target=plot_images,
-            #     args=(img, targets, paths, file, names),
-            #     kwargs={"masks": masks},
-            #     daemon=True
-            # ).start()
+            file = save_dir / f'test_batch{i_batch}_labels.jpg'  # labels
+            Thread(
+                target=plot_images,
+                args=(img, targets, paths, file, names),
+                kwargs={"masks": masks},
+                daemon=True
+            ).start()
 
             # plot prediction
             file = save_dir / f'test_batch{i_batch}_pred.jpg'  # predictions
-            im = plot_images(
-                img,
-                output_to_target(out, max_det=max_n_targets),
-                paths,
-                file,
-                names,
-                masks=torch.cat(plot_masks, dim=0) if len(plot_masks) else None,
-                th_conf=conf_thres
-            )
-            # Thread(
-            #     target=plot_images,
-            #     args=(img, output_to_target(out, max_det=max_n_targets), paths, file, names),
-            #     kwargs={
-            #         "masks": torch.cat(plot_masks, dim=0) if len(plot_masks) else None
-            #     },
-            #     daemon=True
-            # ).start()
+            Thread(
+                target=plot_images,
+                args=(img, output_to_target(out, max_det=max_n_targets), paths, file, names),
+                kwargs={
+                    "masks": torch.cat(plot_masks, dim=0) if len(plot_masks) else None,
+                    "max_subplots": batch_size
+                },
+                daemon=True
+            ).start()
+            # im = plot_images(
+            #     img,
+            #     output_to_target(out, max_det=max_n_targets),
+            #     paths,
+            #     file,
+            #     names,
+            #     masks=torch.cat(plot_masks, dim=0) if len(plot_masks) else None,
+            #     th_conf=conf_thres,
+            #     max_subplots=batch_size
+            # )
+
 
     # Compute statistics
     stats = [np.concatenate(x, 0) for x in zip(*stats)]  # to numpy
