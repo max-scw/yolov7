@@ -446,13 +446,13 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                 if p2fl.is_dir():  # dir
                     image_files += list(p2fl.glob("**/*.*"))
                 elif p2fl.is_file():  # file
-                    with open(p2fl, 'r') as fid:
+                    with open(p2fl, "r", encoding="utf-8") as fid:
                         lines = fid.read().strip().splitlines()
                         # convert paths to pathlib objects
                         lines = [Path(el) for el in lines]
                         # add parent of the data info file if the path to the label file is not an absolute path.
                         # (this is just a precaution)
-                        image_files += [el if el.is_absolute() else p2fl.parent / el for el in lines]
+                        image_files += [el if el.is_absolute() else (p2fl.parent / el).resolve() for el in lines]
                 else:
                     raise Exception(f'{prefix}{p2fl} does not exist')
             # add files if they match one of the allowed image formats
