@@ -63,7 +63,8 @@ def set_logging(rank=-1, filename: Union[str, Path] = None):
 
     logging.basicConfig(
         **kwargs,
-        level=logging.INFO if rank in [-1, 0] else logging.WARN)
+        level=logging.INFO if rank in [-1, 0] else logging.WARN
+    )
 
 
 def set_process_title(process_title: str = "") -> None:
@@ -73,32 +74,6 @@ def set_process_title(process_title: str = "") -> None:
             setproctitle(process_title)
         except Exception as ex:
             warnings.warn(f"Process could not be named: {ex}")
-
-# class Log:
-#     _filename = None
-#
-#     def __init__(self, filename: Union[str, Path] = None, print_message: bool = False, level=logging.INFO):
-#         if filename:
-#             if isinstance(filename, Log) or filename is None:
-#                 self._filename = filename
-#             elif isinstance(filename, (str, Path)):
-#                 self._filename = Path(filename).with_suffix(".log")
-#             else:
-#                 raise TypeError(f"Unknown type fo input <filename>: {type(filename)}")
-#             # turn logging on
-#             logging.basicConfig(filename=self._filename,
-#                                 level=level,
-#                                 filemode="a",
-#                                 format="%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s",
-#                                 datefmt="%H:%M:%S"
-#                                 )
-#         self._print_message = print_message
-#
-#     def log(self, message: str, print_message: bool = False):
-#         if self._filename:
-#             logging.info(message)
-#         if self._print_message or print_message:
-#             print(message)
 
 
 def init_seeds(seed=0):

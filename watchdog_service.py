@@ -10,7 +10,9 @@ import cv2 as cv
 
 from detect import Inference
 
-from utils.general import Log
+# from utils.general import Log
+import logging
+from utils.general import set_logging
 
 
 class Watchmen:
@@ -52,10 +54,11 @@ class Handler(FileSystemEventHandler):
         self.image_size2display = image_size2display
         self.th_score = th_score
         self.th_iou = th_iou
-        self._log = Log(path_to_result_log)
+        set_logging(filename=path_to_result_log)
+        self._log = logging.getLogger(__name__)
         # initialize log
-        self._log.log("New startup...")
-        self._log.log(f"#boxes,{','.join(self.model.names)},path")
+        self._log.info("New startup...")
+        self._log.info(f"#boxes,{','.join(self.model.names)},path")
         # opencv window name
         self.__window_name = "Inference YOLOv7: " + Path(path_to_weights).stem
         print("Eventhandler initialized.")
@@ -92,7 +95,7 @@ class Handler(FileSystemEventHandler):
                 class_count = ",".join([str(classes.count(i)) for i in range(self.model.n_classes)])
                 # log result
                 msg = f"{len(classes)},{class_count},{event_path.as_posix()}"
-                self._log.log(msg)
+                self._log.info(msg)
 
 
 if __name__ == "__main__":
