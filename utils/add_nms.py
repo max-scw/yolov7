@@ -2,9 +2,58 @@ import numpy as np
 import onnx
 from onnx import helper, shape_inference
 
+from typing import List, Union
 import logging
 
 LOGGER = logging.getLogger(__name__)
+
+
+def slice_tensor(
+        input_name: str,
+        output_name: str,
+        start_idx: Union[int, List[int]],
+        end_idx: Union[int, List[int]],
+):
+
+    if isinstance(start_idx, int):
+        start_idx = [start_idx]
+        len_start = 1
+    else:
+        len_start = len(start_idx)
+
+    if isinstance(end_idx, int):
+        end_idx = [end_idx]
+        len_end = 1
+    else:
+        len_end = len(end_idx)
+
+    assert len_start == len_end
+    dims = [len_start]
+
+    # Slice the tensors
+    start_constant = helper.make_node(
+        "Constant",
+        inputs=[],
+        outputs=[f"{output_name}_start"],
+        value=helper.make_tensor(name=f"{output_name}_starts_tensor", data_type=onnx.TensorProto.INT64, dims=dims, vals=start_idx)
+    )
+
+    end_constant = helper.make_node(
+        "Constant",
+        inputs=[],
+        outputs=[f"{output_name}_end"],
+        value=helper.make_tensor(name=f"{output_name}_ends_tensor", data_type=onnx.TensorProto.INT64, dims=dims, vals=end_idx)
+    )
+
+    # Create a Slice node to extract elements from the first to the fourth column
+    slice = helper.make_node(
+        "Slice",  # Node type
+        inputs=[input_name, f"{output_name}_start", f"{output_name}_end"],  # Input tensors
+        outputs=[output_name],  # Output tensor name
+    )
+    # Add the Slice node to the graph
+    return [start_constant, end_constant, slice]
+
 
 
 class RegisterNMS(object):
@@ -40,57 +89,26 @@ class RegisterNMS(object):
         output_names = [output.name for output in onnx_model.graph.output]
 
         # Slice the tensors
-        # ---- bounding box
-        bboxes_start_constant = helper.make_node(
-            'Constant',
-            inputs=[],
-            outputs=['bboxes_start_constant'],
-            value=helper.make_tensor(name="starts_tensor", data_type=onnx.TensorProto.INT32, dims=[1], vals=[1])
-        )
-
-        bboxes_end_constant = helper.make_node(
-            'Constant',
-            inputs=[],
-            outputs=['bboxes_end_constant'],
-            value=helper.make_tensor(name="ends_tensor", data_type=onnx.TensorProto.INT32, dims=[1], vals=[4])
-        )
-
-        # Create a Slice node to extract elements from the first to the fourth column
-        bboxes = helper.make_node(
-            'Slice',  # Node type
-            inputs=[output_names[0], 'bboxes_start_constant', 'bboxes_end_constant'],  # Input tensors
-            outputs=['bboxes'],  # Output tensor name
-        )
-        # Add the Slice node to the graph
         print("extend node to slice box coordinates ...")
-        onnx_model.graph.node.extend([bboxes_start_constant, bboxes_end_constant, bboxes])
+        onnx_model.graph.node.extend(
+            slice_tensor(
+                    input_name=output_names[0],
+                    output_name="bboxes",
+                    start_idx=1,
+                    end_idx=4,
+            )
+        )
         onnx.checker.check_model(onnx_model)  # check onnx model
 
-        # ---- scores
-        scores_start_constant = helper.make_node(
-            'Constant',
-            inputs=[],
-            outputs=['scores_start_constant'],
-            value=helper.make_tensor(name="starts_tensor", data_type=onnx.TensorProto.INT32, dims=[1], vals=[5])
-        )
-
-        scores_end_constant = helper.make_node(
-            'Constant',
-            inputs=[],
-            outputs=['scores_end_constant'],
-            value=helper.make_tensor(name="ends_tensor", data_type=onnx.TensorProto.INT32, dims=[1], vals=[6])
-        )
-
-        # Create a Slice node to extract elements from the first to the fourth column
-        scores = helper.make_node(
-            'Slice',  # Node type
-            inputs=[output_names[0], 'scores_start_constant', 'scores_end_constant'],  # Input tensors
-            outputs=['scores'],  # Output tensor name
-        )
-
-        # Add the Slice node to the graph
         print("extend node to slice score vector ...")
-        onnx_model.graph.node.extend([scores_start_constant, scores_end_constant, scores])
+        onnx_model.graph.node.extend(
+            slice_tensor(
+                    input_name=output_names[0],
+                    output_name="scores",
+                    start_idx=5,
+                    end_idx=6,
+            )
+        )
         onnx.checker.check_model(onnx_model)  # check onnx model
 
         # ---- non-maximum-suppression
