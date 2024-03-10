@@ -14,7 +14,6 @@ class RegisterNMS(object):
         self.model_path = onnx_model_path
         self.batch_size = 1
 
-
     def save(self, output_path):
         if self.model is not None:
             onnx.save(self.model, output_path)
@@ -95,14 +94,14 @@ class RegisterNMS(object):
         onnx.checker.check_model(onnx_model)  # check onnx model
 
         # ---- non-maximum-suppression
-        # attributes as constants
+        # input constants
         simple_constants = [
-            # Specify box format: 0 = [x1, y1, x2, y2] 1 = [x_center, y_center, width, height]
-            ("center_point_box", 0, onnx.TensorProto.INT32),
             # Maximum number of output boxes to keep per class
-            ("max_output_boxes_per_class", detections_per_img, onnx.TensorProto.INT32),
+            ("max_output_boxes_per_class", detections_per_img, onnx.TensorProto.INT64),
             # IoU threshold for NMS
-            ("iou_threshold", nms_iou_thresh, onnx.TensorProto.FLOAT)
+            ("iou_threshold", nms_iou_thresh, onnx.TensorProto.FLOAT),
+            # Score threshold for NMS
+            ("score_threshold ", score_thresh, onnx.TensorProto.FLOAT)
         ]
 
         for ky, vl, ty in simple_constants:
@@ -115,7 +114,12 @@ class RegisterNMS(object):
             inputs=["bboxes", "scores"] + [el[0] for el in simple_constants],
             outputs=["selected_indices"],
             name="nms_node",
+            # attribute=list(attributes.values())
         )
+        # adjust attribute(s)
+        # Specify box format: 0 = [x1, y1, x2, y2] 1 = [x_center, y_center, width, height]
+        center_point_box = onnx.helper.make_attribute("center_point_box", 0, attr_type=onnx.AttributeProto.INT)
+        nms_node.attribute.append(center_point_box)
 
         # Add the NMS node to the model
         print("append node with nms ...")
@@ -125,16 +129,16 @@ class RegisterNMS(object):
 
         print("infer shape ...")
         # Infer shapes after modifying the graph
-        inferred_model = shape_inference.infer_shapes(onnx_model)
+        # inferred_model = shape_inference.infer_shapes(onnx_model)
 
         # Save the updated model
         # self.save(model, "updated_model.onnx")
-        onnx.checker.check_model(inferred_model)  # check onnx model
+        # onnx.checker.check_model(inferred_model)  # check onnx model
 
         # Store the updated model
-        self.model = inferred_model
+        self.model = onnx_model
 
         LOGGER.info(f"Created NMS plugin 'NonMaxSuppression'.")
 
-        return inferred_model
+        return onnx_model
 
