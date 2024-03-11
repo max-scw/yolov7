@@ -55,17 +55,25 @@ def butter_lowpass_filtfilt(data, cutoff=1500, fs=50000, order=5):
     b, a = butter_lowpass(cutoff, fs, order=order)
     return filtfilt(b, a, data)  # forward-backward filter
 
-def color2rgb(color: Union[Tuple[int, int, int], List[int], str]) -> Tuple[int, int, int]:
+
+def color2rgb(color: Union[Tuple[int, int, int], List[int], str, np.ndarray]) -> Tuple[int, int, int]:
+    """
+    converts hex color code or color tuple to RGB integer tuple.
+    If no input is provided, a random color tuple is generated
+    :param color:
+    :return: RGB color tuple
+    """
     if isinstance(color, str) and len(color) == 7 and color[0] == "#":
         # hex color code
         # color_ = ImageColor.getrgb(color)
         color_ = tuple(int(color[i:i + 2], 16) for i in (1, 3, 5))
-    elif isinstance(color, (tuple, list)) and len(color) == 3 and all(
-            [isinstance(el, int) and 0 <= el <= 255 for el in color]):
+    elif (isinstance(color, (tuple, list, np.ndarray)) and
+          (len(color) == 3) and
+          all([0 <= el <= 255 for el in color])):
         # RGB
-        color_ = color
+        color_ = [int(el) for el in color]
     else:
-        color_ = [random.randint(0, 255) for _ in range(3)]
+        color_ = [random.randint(0, 255) for _ in range(3)]  # np.random.randint(0, 255, (3, ))
     return color_
 
 
@@ -146,14 +154,28 @@ def plot_images(
         images: Union[torch.Tensor, np.ndarray],
         targets: Union[torch.Tensor, np.ndarray],
         paths: Union[str, Path] = None,
-        fname: str = 'images.jpg',
+        fname: str = None,
         names: Dict[str, str] = None,
         max_size: int = 640,
         max_subplots: int = 16,
         aspect_ratio: float = 5 / 4,
-        masks: List[torch.Tensor] = None,  #Union[torch.Tensor, np.ndarray]
+        masks: List[torch.Tensor] = None,  # Union[torch.Tensor, np.ndarray]
         th_conf: float = 0.25,  # confidence threshold to supress plotting an element (box or mask)
 ) -> np.ndarray:
+    """
+
+    :param images:
+    :param targets: #[[batch_id, class_id, x0, y0, w, h, score, class_id]
+    :param paths:
+    :param fname:
+    :param names:
+    :param max_size:
+    :param max_subplots:
+    :param aspect_ratio:
+    :param masks:
+    :param th_conf:
+    :return:
+    """
     # Plot image grid with labels
     if isinstance(images, torch.Tensor):
         images = images.cpu().float().numpy()
