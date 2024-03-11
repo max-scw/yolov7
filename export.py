@@ -34,7 +34,7 @@ if __name__ == '__main__':
     parser.add_argument('--conf-thres', type=float, default=0.25, help='conf threshold for NMS')
     parser.add_argument('--device', default='cpu', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--simplify', action='store_true', help='simplify onnx model')
-    parser.add_argument('--include-nms', action='store_true', help='export end2end onnx')
+    # parser.add_argument('--include-nms', action='store_true', help='export end2end onnx')
     parser.add_argument('--fp16', action='store_true', help='CoreML FP16 half-precision export')
     parser.add_argument('--int8', action='store_true', help='CoreML INT8 quantization')
     opt = parser.parse_args()
@@ -76,9 +76,9 @@ if __name__ == '__main__':
         #     m.forward = m.forward_export  # assign forward (optional)
     model.model[-1].export = not opt.grid  # set Detect() layer grid export
     y = model(img)  # dry run
-    if opt.include_nms:
-        model.model[-1].include_nms = True
-        y = None
+    # if opt.include_nms:
+    #     model.model[-1].include_nms = True
+    #     y = None
 
     # # TorchScript export
     # try:
@@ -211,13 +211,13 @@ if __name__ == '__main__':
         onnx.save(onnx_model, filename)
         print(f"ONNX export success; saved as {filename}")
 
-        if opt.include_nms:
-            print('Registering NMS plugin for ONNX ...')
-            mo = RegisterNMS(filename.as_posix())
-            print('Register NMS ...')
-            mo.register_nms()
-            print('Save extended model ...')
-            mo.save(filename)
+        # if opt.include_nms:
+        #     print('Registering NMS plugin for ONNX ...')
+        #     mo = RegisterNMS(filename.as_posix())
+        #     print('Register NMS ...')
+        #     mo.register_nms()
+        #     print('Save extended model ...')
+        #     mo.save(filename)
 
         if opt.fp16:
             print("Converting ONNX model to fp16 precision:")
