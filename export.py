@@ -11,7 +11,6 @@ import torch.nn as nn
 from torch.utils.mobile_optimizer import optimize_for_mobile
 from onnxconverter_common import float16
 
-
 import models
 from models.experimental import attempt_load, End2End
 from utils.activations import Hardswish, SiLU
@@ -42,9 +41,13 @@ if __name__ == '__main__':
 
     print_debug_msg(opt, "INFO")
 
+    if isinstance(opt.img_size, int):
+        opt.img_size = (opt.img_size, )
     opt.img_size *= 2 if len(opt.img_size) == 1 else 1  # expand
+
     opt.dynamic = opt.dynamic and not opt.end2end
     opt.dynamic = False if opt.dynamic_batch else opt.dynamic
+
     print(opt)
     set_logging()
     t = time.time()
@@ -226,8 +229,8 @@ if __name__ == '__main__':
             model_fp16 = float16.convert_float_to_float16(onnx_model)
             print("Saving model ...")
             onnx.save(model_fp16, filename.with_name(f"{filename.name}_fp16"))
-
     except Exception as e:
+        raise e
         print(f"ONNX export failure: {e}")
 
     # Finish
