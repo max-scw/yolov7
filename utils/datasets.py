@@ -32,7 +32,6 @@ from utils.general import (
     colorstr
 )
 from utils.torch_utils import torch_distributed_zero_first
-from utils.debugging import print_debug_msg
 
 from utils.augmentation import build_augmentation_pipeline
 
@@ -222,7 +221,7 @@ class LoadImages:  # for inference
                     ret_val, img0 = self.cap.read()
 
             self.frame += 1
-            print(f'video {self.count + 1}/{self.nf} ({self.frame}/{self.nframes}) {path}: ', end='')
+            logging.debug(f'video {self.count + 1}/{self.nf} ({self.frame}/{self.nframes}) {path}: ', end='')
 
         else:
             # Read image
@@ -233,7 +232,7 @@ class LoadImages:  # for inference
 
         # Padded resize
         img = letterbox(img0, self.img_size, stride=self.stride)[0]
-        print_debug_msg(f"LoadImages: letterbox. img0.shape={img0.shape}, img.shape={img.shape}")
+        logging.debug(f"LoadImages: letterbox. img0.shape={img0.shape}, img.shape={img.shape}")
         # Convert
         img = img[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3x416x416
         img = np.ascontiguousarray(img)
@@ -292,7 +291,7 @@ class LoadWebcam:  # for inference
         # Print
         assert ret_val, f'Camera Error {self.pipe}'
         img_path = 'webcam.jpg'
-        print(f'webcam {self.count}: ', end='')
+        logging.debug(f'webcam {self.count}: ', end='')
 
         # Padded resize
         img = letterbox(img0, self.img_size, stride=self.stride)[0]
@@ -324,7 +323,7 @@ class LoadStreams:  # multiple IP or RTSP cameras
         self.sources = [clean_str(x) for x in sources]  # clean source names for later
         for i, src in enumerate(sources):
             # Start the thread to read frames from the video stream
-            print(f'{i + 1}/{n}: {src}... ', end='')
+            logging.debug(f'{i + 1}/{n}: {src}... ', end='')
             url = eval(src) if src.isnumeric() else src
             if 'youtube.com/' in str(url) or 'youtu.be/' in str(url):  # if source is YouTube video
                 check_requirements(('pafy', 'youtube_dl'))
@@ -338,15 +337,14 @@ class LoadStreams:  # multiple IP or RTSP cameras
 
             _, self.imgs[i] = cap.read()  # guarantee first frame
             thread = Thread(target=self.update, args=([i, cap]), daemon=True)
-            print(f' success ({w}x{h} at {self.fps:.2f} FPS).')
+            logging.info(f' success ({w}x{h} at {self.fps:.2f} FPS).')
             thread.start()
-        print('')  # newline
 
         # check for common shapes
         s = np.stack([letterbox(x, self.img_size, stride=self.stride)[0].shape for x in self.imgs], 0)  # shapes
         self.rect = np.unique(s, axis=0).shape[0] == 1  # rect inference if all shapes equal
         if not self.rect:
-            print('WARNING: Different stream shapes detected. For optimal performance supply similarly-shaped streams.')
+            logging.warning('Different stream shapes detected. For optimal performance supply similarly-shaped streams.')
 
     def update(self, index, cap):
         # Read next stream frame in a daemon thread
@@ -640,14 +638,14 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                 cache[im_file] = [lines, shape, segments]
             except Exception as e:
                 n_corrupted += 1
-                print(f'{prefix}WARNING: Ignoring corrupted image and/or label {im_file}: {e}')
+                logging.warning(f'Ignoring corrupted image and/or label {im_file}: {e}')
 
             pbar.desc = f"{prefix}Scanning '{path_to_cache.parent / path_to_cache.stem}' images and labels... " \
                         f"{n_found} found, {n_missing} missing, {n_empty} empty, {n_corrupted} corrupted"
         pbar.close()
 
         if n_found == 0:
-            print(f'{prefix}WARNING: No labels found in {path_to_cache}.')
+            logging.warning(f'No labels found in {path_to_cache}.')
 
         cache['hash'] = get_hash(self.label_files + self.img_files)
         cache['results'] = n_found, n_missing, n_empty, n_corrupted, n_files
@@ -729,7 +727,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                     sample_labels += sample_labels_
                     sample_images += sample_images_
                     sample_masks += sample_masks_
-                    # print(len(sample_labels))
+
                     if len(sample_labels) == 0:
                         break
                 labels = pastein(img, labels, sample_labels, sample_images, sample_masks)
@@ -1161,7 +1159,6 @@ def sample_segments(img, labels, segments, probability=0.5):
             box = l[1].astype(int).clip(0, w - 1), l[2].astype(int).clip(0, h - 1), l[3].astype(int).clip(0, w - 1), l[
                 4].astype(int).clip(0, h - 1)
 
-            # print(box)
             if (box[2] <= box[0]) or (box[3] <= box[1]):
                 continue
 
@@ -1175,7 +1172,7 @@ def sample_segments(img, labels, segments, probability=0.5):
             result = cv2.bitwise_and(src1=img, src2=mask)
             i = result > 0  # pixels to replace
             mask[i] = result[i]  # cv2.imwrite('debug.jpg', img)  # debug
-            # print(box)
+
             sample_images.append(mask[box[1]:box[3], box[0]:box[2], :])
 
     return sample_labels, sample_images, sample_masks
@@ -1574,7 +1571,7 @@ def autosplit(path='../coco', weights=(0.9, 0.1, 0.0), annotated_only=False):
     txt = ['autosplit_train.txt', 'autosplit_val.txt', 'autosplit_test.txt']  # 3 txt files
     [(path / x).unlink() for x in txt if (path / x).exists()]  # remove existing
 
-    print(f'Autosplitting images from {path}' + ', using *.txt labeled images only' * annotated_only)
+    logging.debug(f'Autosplitting images from {path}' + ', using *.txt labeled images only' * annotated_only)
     for i, img in tqdm(zip(indices, files), total=n):
         if not annotated_only or Path(img2label_paths([str(img)])[0]).exists():  # check label
             with open(path / txt[i], 'a') as f:
@@ -1583,6 +1580,5 @@ def autosplit(path='../coco', weights=(0.9, 0.1, 0.0), annotated_only=False):
 
 def load_segmentations(self, index):
     key = '/work/handsomejw66/coco17/' + self.img_files[index]
-    # print(key)
     # /work/handsomejw66/coco17/
     return self.segs[key]

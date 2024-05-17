@@ -3,6 +3,7 @@ import sys
 import time
 import warnings
 from pathlib import Path
+import logging
 
 sys.path.append('./')  # to run '$ python *.py' files in subdirectories
 
@@ -17,7 +18,6 @@ from utils.activations import Hardswish, SiLU
 from utils.general import set_logging, check_img_size
 from utils.torch_utils import select_device
 from utils.add_nms import RegisterNMS
-from utils.debugging import print_debug_msg
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -39,8 +39,8 @@ if __name__ == '__main__':
     # parser.add_argument('--int8', action='store_true', help='CoreML INT8 quantization')
 
     opt = parser.parse_args()
-
-    print_debug_msg(opt, "INFO")
+    set_logging()  # FIXME ??
+    logging.debug(f"Input arguments export.py: {opt}")
 
     if isinstance(opt.img_size, int):
         opt.img_size = (opt.img_size, )
@@ -49,8 +49,6 @@ if __name__ == '__main__':
     opt.dynamic = opt.dynamic and not opt.end2end
     opt.dynamic = False if opt.dynamic_batch else opt.dynamic
 
-    print(opt)
-    set_logging()
     t = time.time()
 
     # Load PyTorch model
@@ -128,7 +126,7 @@ if __name__ == '__main__':
     try:
         import onnx
 
-        print(f"\nStarting ONNX export with onnx {onnx.__version__} ...")
+        logging.info(f"\nStarting ONNX export with onnx {onnx.__version__} ...")
         filename = Path(opt.weights).with_suffix(".onnx")  # filename
         model.eval()
         output_names = ['classes', 'boxes'] if y is None else ['output']
@@ -157,7 +155,7 @@ if __name__ == '__main__':
             dynamic_axes.update(output_axes)
         if opt.grid:
             if opt.end2end:
-                print(f"\nStarting export end2end onnx model for {'TensorRT' if opt.max_wh is None else 'onnxruntime'} ...")
+                logging.debug(f"\nStarting export end2end onnx model for {'TensorRT' if opt.max_wh is None else 'onnxruntime'} ...")
                 model = End2End(model, opt.topk_all, opt.iou_thres, opt.conf_thres, opt.max_wh, device, len(labels))
                 if opt.max_wh is None:
                     output_names = ['num_dets', 'det_boxes', 'det_scores', 'det_classes']
@@ -202,15 +200,15 @@ if __name__ == '__main__':
             try:
                 import onnxsim
 
-                print('\nStarting to simplify ONNX ...')
+                logging.debug('Starting to simplify ONNX ...')
                 onnx_model, check = onnxsim.simplify(onnx_model)
                 assert check, 'assert check failed'
             except Exception as e:
-                print(f'Simplifier failure: {e}')
+                logging.error(f'Simplifier failure: {e}')
 
         # print(onnx.helper.printable_graph(onnx_model.graph))  # print a human-readable model
         onnx.save(onnx_model, filename)
-        print(f"ONNX export success; saved as {filename}")
+        logging.info(f"ONNX export success; saved as {filename}")
 
         # if opt.include_nms:
         #     print('Registering NMS plugin for ONNX ...')
@@ -221,18 +219,19 @@ if __name__ == '__main__':
         #     mo.save(filename)
 
         if opt.fp16:
-            print("Converting ONNX model to fp16 precision:")
-            print("Loading model ...")
+            logging.debug("Converting ONNX model to fp16 precision:")
+            logging.debug("Loading model ...")
             onnx_model = onnx.load(filename)  # load onnx model
-            print("Checking model ...")
+            logging.debug("Checking model ...")
             onnx.checker.check_model(onnx_model)  # check onnx model
-            print("Converting graph to fp16 ...")
+            logging.debug("Converting graph to fp16 ...")
             model_fp16 = float16.convert_float_to_float16(onnx_model)
-            print("Saving model ...")
+            logging.debug("Saving model ...")
             onnx.save(model_fp16, filename.with_name(f"{filename.name}_fp16"))
     except Exception as e:
+        logging.error(f"ONNX export failure: {e}")
         raise e
-        print(f"ONNX export failure: {e}")
+
 
     # Finish
-    print(f"\nExport complete ({(time.time() - t):.2}s). Visualize with https://github.com/lutzroeder/netron.")
+    logging.info(f"Export complete ({(time.time() - t):.2} s). Visualize with https://github.com/lutzroeder/netron.")

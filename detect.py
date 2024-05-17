@@ -1,6 +1,7 @@
 import argparse
 import time
 from pathlib import Path
+import logging
 
 import cv2 as cv
 import numpy as np
@@ -16,7 +17,6 @@ from utils.plots import plot_one_box, color2rgb
 from utils.torch_utils import select_device, load_classifier, time_synchronized, TracedModel
 
 from typing import Union, Tuple, List, Dict
-from utils.debugging import print_debug_msg
 from utils.datasets import letterbox
 
 
@@ -25,7 +25,7 @@ def detect(opt):
     save_img = not opt.nosave and not source.endswith('.txt')  # save inference images
     webcam = source.isnumeric() or source.endswith('.txt') or source.lower().startswith(
         ('rtsp://', 'rtmp://', 'http://', 'https://'))
-    print_debug_msg(f"source={source}, trace={trace}")
+    logging.debug(f"source={source}, trace={trace}")
 
     # Directories
     save_dir = Path(increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok))  # increment run
@@ -40,7 +40,7 @@ def detect(opt):
     model = attempt_load(weights, map_location=device)  # load FP32 model
     stride = int(model.stride.max())  # model stride
     imgsz = check_img_size(imgsz, s=stride)  # check img_size
-    print_debug_msg(f"imgsz={imgsz}")
+    logging.debug(f"Expected image size of loaded model imgsz={imgsz}")
 
     if trace:
         model = TracedModel(model, device, opt.img_size)
@@ -96,7 +96,7 @@ def detect(opt):
         t2 = time_synchronized()
 
         # Apply NMS
-        print_debug_msg(f"conf_thres={opt.conf_thres}, iou_thres={opt.iou_thres}, classes={opt.classes}, agnostic_nms={opt.agnostic_nms}")
+        logging.debug(f"NMS: conf_thres={opt.conf_thres}, iou_thres={opt.iou_thres}, classes={opt.classes}, agnostic_nms={opt.agnostic_nms}")
         pred2 = non_max_suppression(pred, opt.conf_thres, opt.iou_thres, classes=opt.classes, agnostic=opt.agnostic_nms)
         pred = pred2
         t3 = time_synchronized()
@@ -130,15 +130,15 @@ def detect(opt):
                     if save_txt:  # Write to file
                         xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
                         line = (cls, *xywh, conf) if opt.save_conf else (cls, *xywh)  # label format
-                        with open(txt_path + '.txt', 'a') as f:
-                            f.write(('%g ' * len(line)).rstrip() % line + '\n')
+                        with open(txt_path + '.txt', 'a') as fid:
+                            fid.write(('%g ' * len(line)).rstrip() % line + '\n')
 
                     if save_img or view_img:  # Add bbox to image
                         label = f'{names[int(cls)]} {conf:.2f}'
                         plot_one_box(xyxy, im0, label=label, color=colors[int(cls)], line_thickness=1)
 
             # Print time (inference + NMS)
-            print(f'{s}Done. ({(1E3 * (t2 - t1)):.1f}ms) Inference, ({(1E3 * (t3 - t2)):.1f}ms) NMS')
+            logging.info(f'{s}Done. ({(1E3 * (t2 - t1)):.1f} ms) Inference, ({(1E3 * (t3 - t2)):.1f} ms) NMS')
 
             # Stream results
             if view_img:
@@ -149,7 +149,7 @@ def detect(opt):
             if save_img:
                 if dataset.mode == 'image':
                     cv.imwrite(save_path, im0)
-                    print(f" The image with the result is saved in: {save_path}")
+                    logging.info(f"The image with the result is saved in: {save_path}")
                 else:  # 'video' or 'stream'
                     if vid_path != save_path:  # new video
                         vid_path = save_path
@@ -167,9 +167,9 @@ def detect(opt):
 
     if save_txt or save_img:
         s = f"\n{len(list(save_dir.glob('labels/*.txt')))} labels saved to {save_dir / 'labels'}" if save_txt else ''
-        #print(f"Results saved to {save_dir}{s}")
+        logging.debug(f"Results saved to {save_dir}{s}")
 
-    print(f'Done. ({time.time() - t0:.3f}s)')
+    logging.info(f'Done. ({time.time() - t0:.3f} s)')
 
 
 class Inference:
@@ -178,7 +178,7 @@ class Inference:
             weights: Union[str, Path],
             imgsz: int = 640,
             device_type: str = "cpu",
-            colors: List[Tuple[int, int, int] | str] | Dict[int, Tuple[int, int, int] | str] = None
+            colors: Union[List[Union[Tuple[int, int, int], str]], Dict[int, Union[Tuple[int, int, int], str]]] = None
     ) -> None:
         # Initialize
         self.device = select_device(device_type)
@@ -207,7 +207,7 @@ class Inference:
         return len(self.names)
 
     @property
-    def colors(self) -> Dict[int, Tuple[int, int, int] | str]:
+    def colors(self) -> Dict[int, Union[Tuple[int, int, int], str]]:
         if self.__colormap is None:
             self.__colormap = [[random.randint(0, 255) for _ in range(3)] for _ in self.names]
         return self.__colormap
@@ -240,7 +240,7 @@ class Inference:
             for _ in range(3):
                 self.model(img, augment=False)[0]
         t1 = time.time()
-        print(f"Warmup took {(1E3 * (t1 - t0)):.1f}ms.")
+        logging.debug(f"Warmup took {(1E3 * (t1 - t0)):.1f} ms.")
         self._warmed_up = True
         return True
 
@@ -292,7 +292,7 @@ class Inference:
                 info.append(f"{n} {self.names[int(c)]}{'s' * (n > 1)}")
 
         # Print time (inference + NMS)
-        print(f'Predictions: {", ".join(info)}. ({(1E3 * (t2 - t1)):.1f}ms) Inference, ({(1E3 * (t3 - t2)):.1f}ms) NMS')
+        logging.info(f'Predictions: {", ".join(info)}. ({(1E3 * (t2 - t1)):.1f} ms) Inference, ({(1E3 * (t3 - t2)):.1f} ms) NMS')
         xyxy = det[..., :4].int()
         scores = det[..., 4]
         classes = det[..., 5].int()

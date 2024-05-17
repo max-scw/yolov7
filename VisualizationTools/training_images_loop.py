@@ -7,8 +7,6 @@ from utils.datasets import create_dataloader
 from utils.plots import plot_images
 from utils.general import check_img_size
 
-from utils.debugging import print_debug_msg
-
 
 def image_loop(train_path: Path, opt):
     gs = 32  # grid size
@@ -42,7 +40,7 @@ def image_loop(train_path: Path, opt):
             if not path_to_export.is_dir():
                 path_to_export.mkdir()
             p2fl = path_to_export / f"{opt.name}_e{epoch}_b{i}.jpg"
-            print_debug_msg(f"{p2fl.as_posix()}: {imgs.shape}")
+            logging.debug(f"{p2fl.as_posix()}: {imgs.shape}")
             plot_images(imgs, targets, fname=p2fl.as_posix(), max_subplots=opt.batch_size, aspect_ratio=16 / 9, plot_all=True)
 
 

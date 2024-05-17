@@ -37,8 +37,6 @@ from utils.loss import ComputeLoss, ComputeLossOTA
 from utils.plots import plot_images, plot_labels, plot_results, plot_evolution
 from utils.torch_utils import ModelEMA, select_device, intersect_dicts, torch_distributed_zero_first, is_parallel
 
-from utils.debugging import print_debug_msg
-
 from typing import Union, Dict, List, Tuple
 import warnings
 
@@ -91,10 +89,10 @@ def train(hyp: Dict[str, float], opt, device):
 
     # Model
     pretrained = weights.endswith('.pt')
-    print_debug_msg(f"weights={weights}, pretrained={pretrained}")
+    logging.debug(f"weights={weights}, pretrained={pretrained}")
     if pretrained:
         with torch_distributed_zero_first(rank):
-            print_debug_msg(f"Download weights if necessary: {weights}")
+            logging.debug(f"Download weights if necessary: {weights}")
             attempt_download(weights)  # download if not found locally
 
         ckpt = torch.load(weights, map_location=device)  # load checkpoint
@@ -355,8 +353,6 @@ def train(hyp: Dict[str, float], opt, device):
                 f'Using {dataloader.num_workers} dataloader workers\n'
                 f'Logging results to {save_dir}\n'
                 f'Starting training for {epochs} epochs...')
-    # save initial checkpoint
-    torch.save(model, wdir / 'init.pt')
 
     for i_epoch in range(start_epoch, epochs):  # epoch --------------------------------------------------------------
         # put model in training mode
@@ -395,10 +391,10 @@ def train(hyp: Dict[str, float], opt, device):
                 path_to_export = Path(opt.export_training_images) / opt.name
                 if not path_to_export.is_dir():
                     path_to_export.mkdir()
-                    print_debug_msg(f"Directory created to export (augmented) training batches: "
+                    logging.debug(f"Directory created to export (augmented) training batches: "
                                     f"{path_to_export.as_posix()}")
                 p2fl = path_to_export / f"{opt.name}_e{i_epoch}_b{i_batch}.jpg"
-                print_debug_msg(f"{p2fl.as_posix()}: {imgs.shape}")
+                logging.debug(f"{p2fl.as_posix()}: {imgs.shape}")
                 # plot ground truth
                 plot_images(
                     imgs,
@@ -567,7 +563,7 @@ def train(hyp: Dict[str, float], opt, device):
                             # get the oldest file
                             file_to_delete = checkpoints.pop(0)
 
-                            print_debug_msg(f"Delete file {file_to_delete.as_posix()}")
+                            logging.debug(f"Deleting file {file_to_delete.as_posix()}")
                             file_to_delete.unlink()
 
                 if i_epoch == 0 or \
@@ -674,7 +670,7 @@ if __name__ == '__main__':
 
     opt = parser.parse_args()
 
-    print_debug_msg(f"parser opt={opt}")
+    logging.debug(f"Input arguments train.py: {opt}")
 
     if opt.process_title:
         set_process_title(opt.process_title)
