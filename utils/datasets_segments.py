@@ -9,6 +9,7 @@ import torch
 from utils.general import (
     xywhn2xyxy,
     xyn2xy,
+    xyxy2xywhn,
     # colorstr
     clip_coords
 )
@@ -23,6 +24,9 @@ from utils.datasets import (
     LoadImagesAndLabels,
 )
 from utils.segment import augmentations as segaug   # TODO: check code from mask branch
+
+# from utils.plots import plot_images
+# from PIL import Image
 
 
 def create_dataloader(
@@ -105,6 +109,7 @@ class LoadImagesAndLabelsWithMasks(LoadImagesAndLabels):  # for training/testing
         self,
         **kwargs,
     ):
+        logging.debug(f"LoadImagesAndLabelsWithMasks({kwargs})")
         super().__init__(**{ky: val for ky, val in kwargs.items() if ky not in ["overlap", "downsample_ratio"]})
 
         self.downsample_ratio = kwargs["downsample_ratio"] if "downsample_ratio" in kwargs else 1
@@ -156,7 +161,7 @@ class LoadImagesAndLabelsWithMasks(LoadImagesAndLabels):  # for training/testing
                 labels[:, 1:] = xywhn2xyxy(labels[:, 1:], ratio[0] * w, ratio[1] * h, padw=pad[0], padh=pad[1])
                 is_rel_coords = False
 
-        if self.augment:
+        if self.augment and random.random() < self.augmentation_probability:
             img, labels, segments = segaug.random_perspective(
                 img,
                 targets=labels,
@@ -198,39 +203,31 @@ class LoadImagesAndLabelsWithMasks(LoadImagesAndLabels):  # for training/testing
                     img.shape[1] // self.downsample_ratio
                 ), dtype=np.uint8
             )
-            # print(f"DEBUG: no masks. Create black mask: masks.shape={masks.shape}, labels.shape={labels.shape}")
+            logging.debug(f"No masks. Create black mask: masks.shape={masks.shape}, labels.shape={labels.shape}")
 
         if self.augment:
             if self.albumentations is not None:
                 # Albumentations
                 # there are some augmentation that won't change boxes and masks,
                 # so just be it for now.
+                # tmp = [(img, labels, masks)]  # FIXME: debugging
                 img, labels, masks = self.albumentations(img, labels, masks)
+                # tmp.append((img, labels, masks))  # FIXME: debugging
+                # # for img, labels, masks in tmp:  # FIXME: debugging
+                # #     targets = np.hstack((np.zeros((len(labels), 1)), labels[:, :1], xyxy2xywhn(labels[:, 1:], img.shape[1], img.shape[0])))
+                # #     draw = plot_images(np.array([img.transpose((2, 0, 1))[::-1]]), targets, masks=masks)
+                # #     Image.fromarray(draw).show()
+
                 n_labels = len(labels)  # update after albumentations
 
             # to torch.Tensor
             masks = torch.from_numpy(masks)
 
             # HSV color-space
-            augment_hsv(img, hgain=hyp["hsv_h"], sgain=hyp["hsv_s"], vgain=hyp["hsv_v"])
+            if random.random() < self.augmentation_probability:
+                augment_hsv(img, hgain=hyp["hsv_h"], sgain=hyp["hsv_s"], vgain=hyp["hsv_v"])
 
             # TODO: add paste_in augmentation
-
-            # # Flip up-down
-            # if random.random() < hyp["flipud"]:
-            #     img = np.flipud(img)
-            #     if n_labels:
-            #         labels[:, 2] = 1 - labels[:, 2]
-            #         masks = torch.flip(masks, dims=[1])
-            #
-            # # Flip left-right
-            # if random.random() < hyp["fliplr"]:
-            #     img = np.fliplr(img)
-            #     if n_labels:
-            #         labels[:, 1] = 1 - labels[:, 1]
-            #         masks = torch.flip(masks, dims=[2])
-
-            # Cutouts  # labels = cutout(img, labels, p=0.5)
 
         if not is_rel_coords and n_labels:
             labels = self.transform_to_relative_coordinates(labels, w=img.shape[0], h=img.shape[1])
@@ -383,15 +380,3 @@ def polygons2masks_overlap(img_size, segments, downsample_ratio=1):
         masks = np.clip(masks, a_min=0, a_max=i + 1)
     return masks, index
 
-
-def xyxy2xywhn(x: np.ndarray, w: int = 640, h: int = 640, clip: bool = False, eps: float = 0.0):
-    # FIXME: only for masks!
-    # Convert nx4 boxes from [x1, y1, x2, y2] to [x, y, w, h] normalized where xy1=top-left, xy2=bottom-right
-    if clip:
-        clip_coords(x, (h - eps, w - eps))  # warning: inplace clip
-    y = x.clone() if isinstance(x, torch.Tensor) else np.copy(x)
-    y[:, 0] = ((x[:, 0] + x[:, 2]) / 2) / w  # x center
-    y[:, 1] = ((x[:, 1] + x[:, 3]) / 2) / h  # y center
-    y[:, 2] = (x[:, 2] - x[:, 0]) / w  # width
-    y[:, 3] = (x[:, 3] - x[:, 1]) / h  # height
-    return y

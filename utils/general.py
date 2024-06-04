@@ -50,7 +50,7 @@ def crop_masks(masks, boxes):
     return masks * ((r >= x1) * (r < x2) * (c >= y1) * (c < y2))
 
 
-def set_logging(rank=-1, filename: Union[str, Path] = None):
+def set_logging(rank=-1, filename: Union[str, Path] = None, logging_level: int = None):
     if filename:
         kwargs = {
             "filename": filename,
@@ -61,9 +61,13 @@ def set_logging(rank=-1, filename: Union[str, Path] = None):
     else:
         kwargs = {"format": "%(message)s"}
 
+    if logging_level is not None:
+        level = logging_level
+    else:
+        level = logging.INFO if rank in [-1, 0] else logging.WARN
     logging.basicConfig(
         **kwargs,
-        level=logging.INFO if rank in [-1, 0] else logging.WARN
+        level=level
     )
 
 
@@ -328,6 +332,18 @@ def xyn2xy(x, w=640, h=640, padw=0, padh=0):
     y = x.clone() if isinstance(x, torch.Tensor) else np.copy(x)
     y[:, 0] = w * x[:, 0] + padw  # top left x
     y[:, 1] = h * x[:, 1] + padh  # top left y
+    return y
+
+
+def xyxy2xywhn(x: np.ndarray, w: int = 640, h: int = 640, clip: bool = False, eps: float = 0.0):
+    # Convert nx4 boxes from [x1, y1, x2, y2] to [x, y, w, h] normalized where xy1=top-left, xy2=bottom-right
+    if clip:
+        clip_coords(x, (h - eps, w - eps))  # warning: inplace clip
+    y = x.clone() if isinstance(x, torch.Tensor) else np.copy(x)
+    y[:, 0] = ((x[:, 0] + x[:, 2]) / 2) / w  # x center
+    y[:, 1] = ((x[:, 1] + x[:, 3]) / 2) / h  # y center
+    y[:, 2] = (x[:, 2] - x[:, 0]) / w  # width
+    y[:, 3] = (x[:, 3] - x[:, 1]) / h  # height
     return y
 
 
@@ -756,8 +772,18 @@ def non_max_suppression(
     return output  # [n_images x [box, conf, class_id, mask]]
 
 
-def non_max_suppression_kpt(prediction, conf_thres=0.25, iou_thres=0.45, classes=None, agnostic=False, multi_label=False,
-                        labels=(), kpt_label=False, nc=None, nkpt=None):
+def non_max_suppression_kpt(
+        prediction,
+        conf_thres=0.25,
+        iou_thres=0.45,
+        classes=None,
+        agnostic=False,
+        multi_label=False,
+        labels=(),
+        kpt_label=False,
+        nc=None,
+        nkpt=None
+):
     """Runs Non-Maximum Suppression (NMS) on inference results
 
     Returns:
@@ -928,6 +954,7 @@ def print_mutation(
 
     return True
 
+
 def apply_classifier(x, model, img, im0):
     # applies a second stage classifier to yolo outputs
     im0 = [im0] if isinstance(im0, np.ndarray) else im0
@@ -977,46 +1004,46 @@ def increment_path(path, exist_ok=True, sep=''):
 
 
 # ---------- masks and segments
-def process_mask_upsample(protos, masks_in, bboxes, shape):
-    """
-    Crop after upsample.
-    proto_out: [mask_dim, mask_h, mask_w]
-    out_masks: [n, mask_dim], n is number of masks after nms
-    bboxes: [n, 4], n is number of masks after nms
-    shape:input_image_size, (h, w)
-
-    return: h, w, n
-    """
-
-    c, mh, mw = protos.shape  # CHW
-    masks = (masks_in @ protos.float().view(c, -1)).sigmoid().view(-1, mh, mw)
-    masks = F.interpolate(masks[None], shape, mode='bilinear', align_corners=False)[0]  # CHW
-    masks = crop(masks, bboxes)  # CHW
-    return masks.gt_(0.5)
-
-
-def process_mask(protos, masks_in, bboxes, shape, upsample=False):
-    """
-    Crop before upsample.
-    proto_out: [mask_dim, mask_h, mask_w]
-    out_masks: [n, mask_dim], n is number of masks after nms
-    bboxes: [n, 4], n is number of masks after nms
-    shape:input_image_size, (h, w)
-
-    return: h, w, n
-    """
-
-    c, mh, mw = protos.shape  # CHW
-    ih, iw = shape
-    masks = (masks_in @ protos.float().view(c, -1)).sigmoid().view(-1, mh, mw)  # CHW
-
-    downsampled_bboxes = bboxes.clone()
-    downsampled_bboxes[:, 0] *= mw / iw
-    downsampled_bboxes[:, 2] *= mw / iw
-    downsampled_bboxes[:, 3] *= mh / ih
-    downsampled_bboxes[:, 1] *= mh / ih
-
-    masks = crop(masks, downsampled_bboxes)  # CHW
-    if upsample:
-        masks = F.interpolate(masks[None], shape, mode='bilinear', align_corners=False)[0]  # CHW
-    return masks.gt_(0.5)
+# def process_mask_upsample(protos, masks_in, bboxes, shape):
+#     """
+#     Crop after upsample.
+#     proto_out: [mask_dim, mask_h, mask_w]
+#     out_masks: [n, mask_dim], n is number of masks after nms
+#     bboxes: [n, 4], n is number of masks after nms
+#     shape:input_image_size, (h, w)
+#
+#     return: h, w, n
+#     """
+#
+#     c, mh, mw = protos.shape  # CHW
+#     masks = (masks_in @ protos.float().view(c, -1)).sigmoid().view(-1, mh, mw)
+#     masks = F.interpolate(masks[None], shape, mode='bilinear', align_corners=False)[0]  # CHW
+#     masks = crop(masks, bboxes)  # CHW
+#     return masks.gt_(0.5)
+#
+#
+# def process_mask(protos, masks_in, bboxes, shape, upsample=False):
+#     """
+#     Crop before upsample.
+#     proto_out: [mask_dim, mask_h, mask_w]
+#     out_masks: [n, mask_dim], n is number of masks after nms
+#     bboxes: [n, 4], n is number of masks after nms
+#     shape:input_image_size, (h, w)
+#
+#     return: h, w, n
+#     """
+#
+#     c, mh, mw = protos.shape  # CHW
+#     ih, iw = shape
+#     masks = (masks_in @ protos.float().view(c, -1)).sigmoid().view(-1, mh, mw)  # CHW
+#
+#     downsampled_bboxes = bboxes.clone()
+#     downsampled_bboxes[:, 0] *= mw / iw
+#     downsampled_bboxes[:, 2] *= mw / iw
+#     downsampled_bboxes[:, 3] *= mh / ih
+#     downsampled_bboxes[:, 1] *= mh / ih
+#
+#     masks = crop(masks, downsampled_bboxes)  # CHW
+#     if upsample:
+#         masks = F.interpolate(masks[None], shape, mode='bilinear', align_corners=False)[0]  # CHW
+#     return masks.gt_(0.5)

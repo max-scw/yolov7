@@ -397,12 +397,12 @@ def train(hyp: Dict[str, float], opt, device):
                 logging.debug(f"{p2fl.as_posix()}: {imgs.shape}")
                 # plot ground truth
                 plot_images(
-                    imgs,
-                    targets,
+                    imgs,  # shape: [batch_size, # channels, height, width]
+                    targets,  # shape: [?, 6] -> [batch nr, class id, x, y, w, h]
                     fname=p2fl.as_posix(),
                     max_subplots=opt.batch_size,
                     aspect_ratio=16 / 9,
-                    masks=masks
+                    masks=masks  # shape: [?, height, width]
                 )
 
             n_integrated_batches = i_batch + n_batches * i_epoch  # number integrated batches (since train start)
@@ -666,9 +666,12 @@ if __name__ == '__main__':
                         help="Do not apply mosaic augmentation.")
     parser.add_argument('--masks', action='store_true', help='Models polygons within the bounding boxes.')
     parser.add_argument('--save-not-every-epoch', action='store_true', help='Does not save every epoch as last.pt')
+
     parser.add_argument('--process-title', type=str, default=None, help='Names the process')
+    parser.add_argument("--logging-level", type=int, default=None, help="Logging level")
 
     opt = parser.parse_args()
+    # TODO: add albumentation probabilities (and parameters?) to (global) optimization
 
     logging.debug(f"Input arguments train.py: {opt}")
 
@@ -678,7 +681,7 @@ if __name__ == '__main__':
     # Set DDP variables
     opt.world_size = int(os.environ['WORLD_SIZE']) if 'WORLD_SIZE' in os.environ else 1
     opt.global_rank = int(os.environ['RANK']) if 'RANK' in os.environ else -1
-    set_logging(opt.global_rank)
+    set_logging(opt.global_rank, logging_level=opt.logging_level)
     # if opt.global_rank in [-1, 0]:
     #    check_git_status()
     #    check_requirements()

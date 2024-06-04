@@ -415,6 +415,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
             ):
         self.img_size = img_size
         self.augment = augment
+        self.augmentation_probability = augmentation_probability
         self.n_kpt = n_keypoints if n_keypoints else 0
         self.sz_label = 5 + 3 * self.n_kpt  # (cls, x, y, w, h) for bbox + [(x, y, visibility), ...] for keypoints
         self.hyp = hyp
@@ -662,7 +663,6 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
             random.shuffle(self.indices)
         index_ = self.indices[index]  # linear, shuffled, or image_weights
 
-
         hyp = self.hyp
         mosaic = self.mosaic and random.random() < hyp['mosaic']
 
@@ -711,7 +711,8 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                 img, labels, masks = self.albumentations(img, labels, masks)
 
             # Augment colorspace
-            augment_hsv(img, hgain=hyp['hsv_h'], sgain=hyp['hsv_s'], vgain=hyp['hsv_v'])
+            if random.random() < self.augmentation_probability:
+                augment_hsv(img, hgain=hyp['hsv_h'], sgain=hyp['hsv_s'], vgain=hyp['hsv_v'])
 
             # Apply cutouts
             # if random.random() < 0.9:
