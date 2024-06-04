@@ -29,10 +29,10 @@ See the respective sections for details in [Training](###Training).
 *Core idea*: "bag of freebies", i.e. invest at training time to reduce inference time => reduce about 40% parameters and 50% computation compared to state-of-the-art real-time object detector.
 To explore the "bag of freebies" (i.e. the hyperparameters), an  evolution-inspired search is started (well, a grid search would indeed be exhaustive.)
 
-### project structure
+### Project structure
  ````
- YOLOv7
-+-- cfg  # model architectures
+YOLOv7
++-- cfg  # model architectures | these are templates. No need for any configuration of the files
    +-- baseline  # configuration of reference models
    +-- deploy  # the same as +-- training
    +-- training  # holds the model configurations
