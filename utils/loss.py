@@ -8,7 +8,7 @@ from utils.general import bbox_iou, bbox_alpha_iou, box_iou, box_giou, box_diou,
 from utils.torch_utils import is_parallel
 
 from typing import List, Union, Dict, Tuple
-import numpy as np
+
 
 def smooth_BCE(eps=0.1):  # https://github.com/ultralytics/yolov3/issues/238#issuecomment-598028441
     # return positive, negative label smoothing BCE targets

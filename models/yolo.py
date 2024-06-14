@@ -31,8 +31,9 @@ class Detect(nn.Module):
     include_nms = False
     concat = False
 
-    def __init__(self, n_classes=80, anchors=(), ch=()):  # detection layer
-        super(Detect, self).__init__()
+    def __init__(self, n_classes: int = 80, anchors=(), ch=()):  # detection layer
+        super().__init__()
+
         self.n_classes = n_classes  # number of classes
         self.n_out = n_classes + 5  # number of outputs per anchor
         self.n_layers = len(anchors)  # number of detection layers
@@ -40,10 +41,21 @@ class Detect(nn.Module):
         self.grid = [torch.zeros(1)] * self.n_layers  # init grid
         a = torch.tensor(anchors).float().view(self.n_layers, -1, 2)
         self.register_buffer('anchors', a)  # shape(nl,na,2)
-        self.register_buffer('anchor_grid', a.clone().view(self.n_layers, 1, -1, 1, 1, 2))  # shape(nl,1,na,1,1,2)
+        self.register_buffer('anchor_grid', a.clone().view(self.n_layers, 1, -1, 1, 1, 2))  # shape(nl, 1, na, 1, 1, 2)
         self.m = nn.ModuleList(nn.Conv2d(x, self.n_out * self.n_anchors, 1) for x in ch)  # output conv
 
     def forward(self, x):
+        # map_attributes = {
+        #     "n_layers": "nl",
+        #     "n_anchors": "na",
+        #     "n_classes": "nc"
+        # }
+        # for attr_long, attr_short in map_attributes.items():
+        #     if hasattr(self, attr_short):
+        #         setattr(self, attr_long, getattr(self, attr_short))
+        # if not hasattr(self, "n_out"):
+        #     self.n_out = self.n_classes + 5
+
         # x = x.copy()  # for profiling
         z = []  # inference output
         self.training |= self.export
@@ -110,7 +122,7 @@ class IDetect(nn.Module):
     concat = False
 
     def __init__(self, n_classes: int = 80, anchors=(), channels: torch.Tensor = ()):  # detection layer
-        super(IDetect, self).__init__()
+        super().__init__()
         self.n_classes = n_classes  # number of classes
         self.n_out = n_classes + 5  # number of outputs per anchor
         self.n_layers = len(anchors)  # number of detection layers
@@ -224,7 +236,7 @@ class IKeypoint(nn.Module):
     export = False  # onnx export
 
     def __init__(self, nc: int = 80, anchors=(), nkpt: int = 17, ch=(), inplace: bool = True, dw_conv_kpt: bool = False):  # detection layer
-        super(IKeypoint, self).__init__()
+        super().__init__()
         self.n_classes = nc  # number of classes | usually 1
         self.n_kpt = nkpt
         self.dw_conv_kpt = dw_conv_kpt
@@ -382,7 +394,7 @@ class MT(nn.Module):
     export = False  # onnx export
 
     def __init__(self, n_classes: int = 80, anchors=(), attn=None, mask_iou: bool = False, ch=()):  # detection layer
-        super(MT, self).__init__()
+        super().__init__()
         self.n_classes = n_classes  # number of classes
         self.n_out = n_classes + 5  # number of outputs per anchor
         self.n_layers = len(anchors)  # number of detection layers
@@ -467,7 +479,7 @@ class IAuxDetect(nn.Module):
     concat = False
 
     def __init__(self, n_classes=80, anchors=(), ch=()):  # detection layer
-        super(IAuxDetect, self).__init__()
+        super().__init__()
         self.n_classes = n_classes  # number of classes
         self.n_out = n_classes + 5  # number of outputs per anchor
         self.n_layers = len(anchors)  # number of detection layers
@@ -590,7 +602,7 @@ class IBin(nn.Module):
     export = False  # onnx export
 
     def __init__(self, n_classes: int = 80, anchors=(), ch=(), bin_count: int = 21):  # detection layer
-        super(IBin, self).__init__()
+        super().__init__()
         self.n_classes = n_classes  # number of classes
         self.bin_count = bin_count
 
