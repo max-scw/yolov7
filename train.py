@@ -283,7 +283,8 @@ def train(hyp: Dict[str, float], opt, device):
         n_keypoints=n_keypoints,
         predict_masks=opt.masks,
         # mask_downsample_ratio,
-        shuffle=True
+        shuffle=True,
+        path_to_images=opt.path_to_images
     )
     mlc = np.concatenate(dataset.labels, 0)[:, 0].max()  # max label class
     n_batches = len(dataloader)  # number of batches
@@ -304,7 +305,8 @@ def train(hyp: Dict[str, float], opt, device):
             augment=False,
             n_keypoints=n_keypoints,
             predict_masks=opt.masks,
-            shuffle=False
+            shuffle=False,
+            path_to_images=opt.path_to_images
         )
 
         if not opt.resume:

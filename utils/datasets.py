@@ -391,6 +391,54 @@ def img2label_paths(img_paths) -> List[Path]:
     return [Path(x).with_suffix('.txt') for x in img_paths]
 
 
+def read_annotations(info_file: Path, image_folder: Path = None) -> Tuple[List[Path], List[Path]]:
+    images = []
+    labels = []
+    try:
+        files = []
+        if info_file.is_dir():  # dir
+            files += list(info_file.glob("**/*.*"))
+        elif info_file.is_file():  # file
+            with open(info_file, "r", encoding="utf-8") as fid:
+                lines = fid.read().strip().splitlines()
+                # convert paths to pathlib objects
+                lines = [Path(el) for el in lines]
+                # add parent of the data info file if the path to the label file is not an absolute path.
+                # (this is just a precaution)
+                files += [el if el.is_absolute() else (info_file.parent / el).resolve() for el in lines]
+        else:
+            raise Exception(f'{info_file} does not exist')
+
+        # files
+        if image_folder is not None:
+            # construct path
+            image_folder = info_file.parent / image_folder
+            if not image_folder.is_dir():
+                raise Exception(f'{image_folder.as_posix()} is not a directory.')
+            # assume all files to be annotations
+            for fl in files:
+                imgs = list(Path(image_folder).glob(f"{fl.stem}.*"))
+                if len(imgs) > 0:
+                    img = imgs[0]
+                    if img.suffix.strip(".") in IMAGE_FORMATS:
+                        images.append(img)
+                        labels.append(fl)
+        else:
+            # assume all files to be annotations
+            for fl in files:
+                img = fl
+                lbl = fl.with_suffix(".txt")
+                if img.suffix.strip(".") in IMAGE_FORMATS:
+                    images.append(img)
+                    labels.append(lbl)
+        # add files if they match one of the allowed image formats
+        img_files = images
+        assert img_files, f"No images found"
+    except Exception as e:
+        raise Exception(f'Error loading data from {info_file.as_posix()}: {e}')
+    return images, labels
+
+
 class LoadImagesAndLabels(Dataset):  # for training/testing
     def __init__(
             self,
@@ -411,7 +459,8 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
             mosaic_augmentation: bool = True,
             n_keypoints: int = None,
             annotation_type: str = "bbox",
-            shuffle: bool = False
+            shuffle: bool = False,
+            path_to_images: Union[str, Path] = None
             ):
         self.img_size = img_size
         self.augment = augment
@@ -426,6 +475,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         self.stride = stride
         self.path_data_info = Path(path_to_data_info)
         self.shuffle = shuffle
+        self.path_to_images = Path(path_to_images) if path_to_images is not None else None
 
         # set augmentation functions by the python package albumentations
         if self.augment and augmentation_config:
@@ -437,33 +487,11 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         else:
             self.albumentations = None
 
-        try:
-            image_files = []  # image files
-            for p2fl in self.path_data_info if isinstance(self.path_data_info, list) else [self.path_data_info]:
-                p2fl = Path(p2fl)  # os-agnostic
-
-                if p2fl.is_dir():  # dir
-                    image_files += list(p2fl.glob("**/*.*"))
-                elif p2fl.is_file():  # file
-                    with open(p2fl, "r", encoding="utf-8") as fid:
-                        lines = fid.read().strip().splitlines()
-                        # convert paths to pathlib objects
-                        lines = [Path(el) for el in lines]
-                        # add parent of the data info file if the path to the label file is not an absolute path.
-                        # (this is just a precaution)
-                        image_files += [el if el.is_absolute() else (p2fl.parent / el).resolve() for el in lines]
-                else:
-                    raise Exception(f'{prefix}{p2fl} does not exist')
-            # add files if they match one of the allowed image formats
-            self.img_files = sorted([Path(x) for x in image_files if Path(x).suffix.strip('.') in IMAGE_FORMATS])
-            assert self.img_files, f'{prefix}No images found'
-        except Exception as e:
-            raise Exception(f'{prefix}Error loading data from {path_to_data_info}: {e}')
+        self.img_files, self.label_files = read_annotations(self.path_data_info, self.path_to_images)
 
         # Check cache
-        self.label_files = img2label_paths(self.img_files)  # labels
-        if p2fl.is_file():
-            cache_path = p2fl
+        if self.path_data_info.is_file():
+            cache_path = self.path_data_info
         else:
             cache_path = Path(self.label_files[0]).parent
         cache_path = cache_path.with_suffix('.cache')

@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 import logging
 import random
 import numpy as np
@@ -28,6 +29,8 @@ from utils.segment import augmentations as segaug   # TODO: check code from mask
 # from utils.plots import plot_images
 # from PIL import Image
 
+from typing import Union
+
 
 def create_dataloader(
         path,
@@ -53,7 +56,8 @@ def create_dataloader(
         predict_masks: bool = False,
         downsample_ratio=1,
         overlap: bool = False,
-        shuffle: bool = False
+        shuffle: bool = False,
+        path_to_images: Union[str, Path] = None
 ):
     # Make sure only the first process in DDP process the dataset first, and the following others can use the cache
     with torch_distributed_zero_first(rank):
@@ -75,7 +79,8 @@ def create_dataloader(
             "augmentation_probability": global_augmentation_probability,
             "mosaic_augmentation": mosaic_augmentation,
             "n_keypoints": n_keypoints,
-            "shuffle": shuffle
+            "shuffle": shuffle,
+            "path_to_images": path_to_images
         }
 
         if predict_masks:
