@@ -412,13 +412,14 @@ def read_annotations(info_file: Path, image_folder: Path = None) -> Tuple[List[P
         # files
         if image_folder is not None:
             # construct path
+            image_folder = info_file.parent / image_folder
             if not image_folder.is_dir():
                 raise Exception(f'{image_folder.as_posix()} is not a directory.')
             # assume all files to be annotations
             for fl in files:
                 imgs = list(Path(image_folder).glob(f"{fl.stem}.*"))
                 if len(imgs) > 0:
-                    img = imgs[0]
+                    img = imgs[0].resolve()
                     if img.suffix.strip(".") in IMAGE_FORMATS:
                         images.append(img)
                         labels.append(fl)
