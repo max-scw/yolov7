@@ -115,7 +115,12 @@ class LoadImagesAndLabelsWithMasks(LoadImagesAndLabels):  # for training/testing
         **kwargs,
     ):
         logging.debug(f"LoadImagesAndLabelsWithMasks({kwargs})")
-        super().__init__(**{ky: val for ky, val in kwargs.items() if ky not in ["overlap", "downsample_ratio"]})
+        # filter key-word arguments for the super class
+        kwargs_ = {ky: val for ky, val in kwargs.items() if ky not in ["overlap", "downsample_ratio"]}
+        # ensure that the annotation type is "segment"
+        kwargs_ |= {"annotation_type": "segment"}
+        # initialize super class
+        super().__init__(**kwargs_)
 
         self.downsample_ratio = kwargs["downsample_ratio"] if "downsample_ratio" in kwargs else 1
         self.overlap = kwargs["overlap"] if "overlap" in kwargs else False
