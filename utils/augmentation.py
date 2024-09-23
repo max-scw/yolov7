@@ -48,8 +48,8 @@ def parse_arguments(config: Dict[str, dict]) -> Dict[str, dict]:
     :return: dictionary of the same depth but with cast values (where applicable) and empty dictionaries where no arguments were provided.
     """
     # prepare regex patterns for casting
-    pattern_float = "(\d+\.\d*|\.\d+)"
-    pattern_int = "\d+"
+    pattern_float = "(\-?\d+\.\d*|\.\d+)"
+    pattern_int = "\-?\d+"
     pattern_number = f"({pattern_float}|{pattern_int})"
 
     # tuple
@@ -210,8 +210,8 @@ if __name__ == "__main__":
     # build_augmentation_pipeline("../data/augmentation-yolov7.yaml")
 
     create_examples(
-        config_file="../data/augmentation-VIAB.yaml",
-        image_dir=r"../dataset/VIAB2/img/230516_082343_0000000214_CAM1_NORMAL_OK.bmp",
+        config_file="../data/CRU-augmentation.yaml",
+        image_dir=r"C:\Users\schwmax\OneDrive - Voith Group of Companies\ProductionDataArchive\ImageData\RotorAssembly\data\img\20240808_131434.jpg",
         export_dir="export",
         oversampling=20
     )
