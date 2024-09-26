@@ -5,6 +5,7 @@ import os
 import random
 import time
 from copy import deepcopy
+from os import mkdir
 from pathlib import Path
 import shutil
 from threading import Thread
@@ -390,11 +391,11 @@ def train(hyp: Dict[str, float], opt, device):
         optimizer.zero_grad()
 
         for i_batch, (imgs, targets, paths, _, masks) in pbar:  # batch ------------------------------------------------------
-            if (opt.export_training_images and
-                    Path(opt.export_training_images).is_dir() and
-                    (n_exported_batches <= opt.n_batches_to_plot)):
+            if (opt.n_exported_batches > 0) and (n_exported_batches <= opt.n_batches_to_plot):
 
-                path_to_export = Path(opt.export_training_images) / opt.name
+                path_to_export = Path(save_dir) / "training_batches"
+                path_to_export.mkdir(exist_ok=True)
+                path_to_export /= opt.name
                 if not path_to_export.is_dir():
                     path_to_export.mkdir()
                     logging.debug(f"Directory created to export (augmented) training batches: "
@@ -668,10 +669,8 @@ if __name__ == '__main__':
                         help="Probability to apply data augmentation based on the albumentations package.")
     parser.add_argument("--augmentation-config", type=str, default="data/augmentation-yolov7.yaml",
                         help="Path to config file with specifications for transformation functions to augment the trainig data.")
-    parser.add_argument("--export-training-images", type=str, default="",
-                        help="Folder where to export the (augmented) training images to.")
-    parser.add_argument("--n-batches-to-plot", type=int, default=100,
-                        help="Number of batches to plot if --export-training-images is set.")
+    parser.add_argument("--n-batches-to-plot", type=int, default=0,
+                        help="Number of batches to plot.")
     parser.add_argument("--no-mosaic-augmentation", action='store_true',
                         help="Do not apply mosaic augmentation.")
     parser.add_argument('--masks', action='store_true', help='Models polygons within the bounding boxes.')
