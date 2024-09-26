@@ -391,7 +391,7 @@ def train(hyp: Dict[str, float], opt, device):
         optimizer.zero_grad()
 
         for i_batch, (imgs, targets, paths, _, masks) in pbar:  # batch ------------------------------------------------------
-            if (opt.n_exported_batches > 0) and (n_exported_batches <= opt.n_batches_to_plot):
+            if (opt.n_batches_to_plot > 0) and (n_exported_batches <= opt.n_batches_to_plot):
 
                 path_to_export = Path(save_dir) / "training_batches"
                 path_to_export.mkdir(exist_ok=True)
