@@ -356,6 +356,7 @@ def train(hyp: Dict[str, float], opt, device):
                 f'Logging results to {save_dir}\n'
                 f'Starting training for {epochs} epochs...')
 
+    n_exported_batches = 0
     for i_epoch in range(start_epoch, epochs):  # epoch --------------------------------------------------------------
         # put model in training mode
         model.train()
@@ -389,7 +390,10 @@ def train(hyp: Dict[str, float], opt, device):
         optimizer.zero_grad()
 
         for i_batch, (imgs, targets, paths, _, masks) in pbar:  # batch ------------------------------------------------------
-            if opt.export_training_images and Path(opt.export_training_images).is_dir():
+            if (opt.export_training_images and
+                    Path(opt.export_training_images).is_dir() and
+                    (n_exported_batches <= opt.n_batches_to_plot)):
+
                 path_to_export = Path(opt.export_training_images) / opt.name
                 if not path_to_export.is_dir():
                     path_to_export.mkdir()
@@ -406,6 +410,7 @@ def train(hyp: Dict[str, float], opt, device):
                     aspect_ratio=16 / 9,
                     masks=masks  # shape: [?, height, width]
                 )
+                n_exported_batches += 1
 
             n_integrated_batches = i_batch + n_batches * i_epoch  # number integrated batches (since train start)
             imgs = imgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
@@ -665,16 +670,18 @@ if __name__ == '__main__':
                         help="Path to config file with specifications for transformation functions to augment the trainig data.")
     parser.add_argument("--export-training-images", type=str, default="",
                         help="Folder where to export the (augmented) training images to.")
+    parser.add_argument("--n-batches-to-plot", type=int, default=100,
+                        help="Number of batches to plot if --export-training-images is set.")
     parser.add_argument("--no-mosaic-augmentation", action='store_true',
                         help="Do not apply mosaic augmentation.")
     parser.add_argument('--masks', action='store_true', help='Models polygons within the bounding boxes.')
     parser.add_argument('--save-not-every-epoch', action='store_true', help='Does not save every epoch as last.pt')
 
+
     parser.add_argument('--process-title', type=str, default=None, help='Names the process')
     parser.add_argument("--logging-level", type=int, default=None, help="Logging level")
 
     opt = parser.parse_args()
-    # TODO: add albumentation probabilities (and parameters?) to (global) optimization
 
     logging.debug(f"Input arguments train.py: {opt}")
 
