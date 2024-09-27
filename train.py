@@ -5,7 +5,6 @@ import os
 import random
 import time
 from copy import deepcopy
-from os import mkdir
 from pathlib import Path
 import shutil
 from threading import Thread
@@ -35,7 +34,7 @@ from utils.general import (labels_to_class_weights, increment_path, labels_to_im
 from utils.metrics import fitness
 from utils.google_utils import attempt_download
 from utils.loss import ComputeLoss, ComputeLossOTA
-from utils.plots import plot_images, plot_labels, plot_results, plot_evolution
+from utils.plots import plot_images, plot_labels, plot_results, plot_evolution, output_to_target
 from utils.torch_utils import ModelEMA, select_device, intersect_dicts, torch_distributed_zero_first, is_parallel
 
 from typing import Union, Dict, List, Tuple
@@ -391,28 +390,6 @@ def train(hyp: Dict[str, float], opt, device):
         optimizer.zero_grad()
 
         for i_batch, (imgs, targets, paths, _, masks) in pbar:  # batch ------------------------------------------------------
-            if (opt.n_batches_to_plot > 0) and (n_exported_batches <= opt.n_batches_to_plot):
-
-                path_to_export = Path(save_dir) / "training_batches"
-                path_to_export.mkdir(exist_ok=True)
-                path_to_export /= opt.name
-                if not path_to_export.is_dir():
-                    path_to_export.mkdir()
-                    logging.debug(f"Directory created to export (augmented) training batches: "
-                                    f"{path_to_export.as_posix()}")
-                p2fl = path_to_export / f"{opt.name}_e{i_epoch}_b{i_batch}.jpg"
-                logging.debug(f"{p2fl.as_posix()}: {imgs.shape}")
-                # plot ground truth
-                plot_images(
-                    imgs,  # shape: [batch_size, # channels, height, width]
-                    targets,  # shape: [?, 6] -> [batch nr, class id, x, y, w, h]
-                    fname=p2fl.as_posix(),
-                    max_subplots=opt.batch_size,
-                    aspect_ratio=16 / 9,
-                    masks=masks  # shape: [?, height, width]
-                )
-                n_exported_batches += 1
-
             n_integrated_batches = i_batch + n_batches * i_epoch  # number integrated batches (since train start)
             imgs = imgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
 
@@ -482,16 +459,46 @@ def train(hyp: Dict[str, float], opt, device):
                 info_str = ('%10s' * 2 + '%10.4g' * 7) % (eps, mem, *mloss, targets.shape[0], imgs.shape[-1])
                 pbar.set_description(info_str)
 
-                # Plot
-                if plots and n_integrated_batches < 10:
-                    path_to_file = save_dir / f'train_batch{n_integrated_batches}.jpg'  # filename
-                    Thread(
-                        target=plot_images,
-                        args=(imgs, targets, paths, path_to_file),
-                        kwargs={"masks": masks},
-                        daemon=True
-                    ).start()  # FIXME: combine with plot above
+            if ((opt.n_batches_to_plot > 0) and (n_exported_batches <= opt.n_batches_to_plot)) or\
+                (plots and n_integrated_batches < 10):
 
+                path_to_export = Path(save_dir) / "training_batches"
+                if not path_to_export.is_dir():
+                    path_to_export.mkdir()
+
+                filename = f"{opt.name}_e{i_epoch}_b{i_batch}"
+
+                kwargs = {
+                    "max_subplots": opt.batch_size,
+                    "aspect_ratio": 16 / 9,
+                    "masks": masks
+                }
+                # plot ground truth
+                Thread(
+                    target=plot_images,
+                    args=(
+                        imgs,   # shape: [batch_size, # channels, height, width]
+                        targets  # shape: [?, 6] -> [batch nr, class id, x, y, w, h]
+                    ),
+                    kwargs={**kwargs, "fname": (path_to_export / f"{filename}_label.jpg").as_posix()},
+                    daemon=True
+                ).start()
+                # # plot predictions
+                # if masks is None or (isinstance(masks, (tuple, list)) and all([el is None for el in masks])):
+                #     # no masks
+                #     max_n_targets = -1
+                # else:
+                #     # masks
+                #     max_n_targets = max_n_masks
+                # Thread(
+                #     target=plot_images,
+                #     args=(
+                #         imgs,   # shape: [batch_size, # channels, height, width]
+                #         output_to_target(pred, max_det=max_n_targets)  # shape: [?, 6] -> [batch nr, class id, x, y, w, h]
+                #     ),
+                #     kwargs={**kwargs, "fname": (path_to_export / f"{filename}_prediction.jpg").as_posix()},
+                #     daemon=True
+                # ).start()
             # end batch ------------------------------------------------------------------------------------------------
         # end epoch ----------------------------------------------------------------------------------------------------
 
