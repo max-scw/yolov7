@@ -252,8 +252,9 @@ def train(hyp: Dict[str, float], opt, device):
     # Image sizes
     gs = max(int(model.stride.max()), 32)  # grid size (max stride)
     n_detection_layers = model.model[-1].n_layers  # number of detection layers (used for scaling hyp['obj'])
-    imgsz, imgsz_test = [check_img_size(x, gs) for x in opt.img_size]  # verify imgsz are gs-multiples
-
+    imgsz = [check_img_size(x, gs) for x in opt.img_size]  # verify imgsz are gs-multiples
+    logging.debug(f"Image size: {imgsz}, Grid size {gs}")
+    imgsz_test = imgsz
     # DP mode
     if cuda and rank == -1 and torch.cuda.device_count() > 1:
         model = torch.nn.DataParallel(model)
@@ -329,7 +330,7 @@ def train(hyp: Dict[str, float], opt, device):
     # Model parameters
     hyp['box'] *= 3. / n_detection_layers  # scale to layers
     hyp['cls'] *= n_classes / 80. * 3. / n_detection_layers  # scale to classes and layers  # INFO: 80 is the number of classes in COCO
-    hyp['obj'] *= (imgsz / 640) ** 2 * 3. / n_detection_layers  # scale to image size and layers
+    hyp['obj'] *= (max(imgsz) / 640) ** 2 * 3. / n_detection_layers  # scale to image size and layers
     # if 'kpt' in hyp:
     #     hyp['kpt'] *= 3. / nl / n_kpt # scale to layers and number of keypoints  # TODO: add hyp['kpt'] scaling
     hyp['label_smoothing'] = opt.label_smoothing
