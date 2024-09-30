@@ -462,7 +462,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
             shuffle: bool = False,
             path_to_images: Union[str, Path] = None
             ):
-        self.img_size = img_size
+        self.img_size = [img_size, img_size] if isinstance(img_size, (int, float)) else img_size
         self.augment = augment
         self.augmentation_probability = augmentation_probability
         self.n_kpt = n_keypoints if n_keypoints else 0
@@ -471,7 +471,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         self.image_weights = image_weights
         self.rect = False if image_weights else rect
         self.mosaic = self.augment and not self.rect and mosaic_augmentation  # load 4 images at a time into a mosaic (only during training)
-        self.mosaic_border = -np.array(img_size) // 2
+        self.mosaic_border = -np.array(self.img_size)[::-1] // 2
         self.stride = stride
         self.path_data_info = Path(path_to_data_info)
         self.shuffle = shuffle
@@ -705,6 +705,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
 
 
             # MixUp https://arxiv.org/pdf/1710.09412.pdf
+            # MixUp https://arxiv.org/pdf/1710.09412.pdf
             if random.random() < hyp['mixup']:
                 if random.random() < 0.8:
                     img2, labels2 = load_mosaic(self, random.randint(0, len(self.labels) - 1))
@@ -718,7 +719,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
             img, (h0, w0), (h, w) = load_image(self, index_)
 
             # Letterbox
-            shape = self.batch_shapes[self.batch[index_]] if self.rect else self.img_size  # final letterboxed shape
+            shape = self.batch_shapes[self.batch[index_]] if self.rect else self.img_size[::-1]  # final letterboxed shape
             img, ratio, pad = letterbox(img, shape, auto=False, scaleup=self.augment)
             shapes = (h0, w0), ((h / h0, w / w0), pad)  # for COCO mAP rescaling
 
