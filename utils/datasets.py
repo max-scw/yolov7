@@ -703,8 +703,6 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                 img, labels = load_mosaic9(self, index_)
             shapes = None
 
-
-            # MixUp https://arxiv.org/pdf/1710.09412.pdf
             # MixUp https://arxiv.org/pdf/1710.09412.pdf
             if random.random() < hyp['mixup']:
                 if random.random() < 0.8:
@@ -916,10 +914,15 @@ def load_image(self, index):
         assert img is not None, f"Image Not Found {p2img.as_posix()}"
 
         h0, w0 = img.shape[:2]  # orig hw
-        r = np.array(self.img_size) / (h0, w0)  # resize image to img_size
-        if any(r != 1):  # always resize down, only resize up if training with augmentation
-            interp = cv2.INTER_AREA if (any(r < 1) and not self.augment) else cv2.INTER_LINEAR
-            img = cv2.resize(img, self.img_size, interpolation=interp)
+        resize_factor = np.array(self.img_size) / (h0, w0)  # resize image to img_size
+        if any(resize_factor != 1):  # always resize down, only resize up if training with augmentation
+            # interpolation method (code)
+            interp = cv2.INTER_AREA if (any(resize_factor < 1) and not self.augment) else cv2.INTER_LINEAR
+            # resize factor
+            resize_factor_min = min(resize_factor)
+            img_size_new = np.array(img.shape[:2]) * resize_factor_min
+            # interpolate
+            img = cv2.resize(img, img_size_new[::-1].astype(int), interpolation=interp)
         return img, (h0, w0), img.shape[:2]  # img, hw_original, hw_resized
     else:
         return self.imgs[index], self.img_hw0[index], self.img_hw[index]  # img, hw_original, hw_resized
@@ -955,7 +958,9 @@ def load_mosaic(self, index):
 
     labels4, segments4 = [], []
     img_w, img_h = self.img_size
+    # pick random center to crop the image later
     yc, xc = [int(random.uniform(-x, 2 * s + x)) for x, s in zip(self.mosaic_border, (img_w, img_h))]  # mosaic center x, y
+
     indices = [index] + random.choices(self.indices, k=3)  # 3 additional image indices
     for i, index in enumerate(indices):
         # Load image
@@ -1025,40 +1030,40 @@ def load_mosaic9(self, index):
         if i == 0:  # center
             img9 = np.full((img_h * 3, img_w * 3, img.shape[2]), 114, dtype=np.uint8)  # base image with 4 tiles
             h0, w0 = h, w
-            # c = img_w, img_h, img_w + w, img_h + h  # xmin, ymin, xmax, ymax (base) coordinates
-            c = (img_w, img_h, 2 * img_w, 2 * img_h)
+            c = (img_w, img_h, img_w + w, img_h + h)  # xmin, ymin, xmax, ymax (base) coordinates
+            # c = (img_w, img_h, 2 * img_w, 2 * img_h)  # ideal
         elif i == 1:  # top
-            # c = img_w, img_h - h, img_w + w, img_h
-            # c = s, s - h, s + w, s
-            c = (img_w, 0, 2 * img_w, img_h)
+            # c = s, s - h, s + w, s  # original
+            c = (img_w, img_h - h, img_w + w, img_h)
+            # c = (img_w, 0, 2 * img_w, img_h)  # ideal
         elif i == 2:  # top right
-            # c = img_w + wp, img_h - h, img_w + wp + w, img_h
-            # c = s + wp, s - h, s + wp + w, s
-            c = (2 * img_w, 0, 3 * img_w, img_h)
+            c = (img_w + wp, img_h - h, img_w + wp + w, img_h)
+            # c = s + wp, s - h, s + wp + w, s  # original
+            # c = (2 * img_w, 0, 3 * img_w, img_h)  # ideal
         elif i == 3:  # right
-            # c = img_w + w0, img_h, img_w + w0 + w, img_h + h
-            # c = s + w0, s, s + w0 + w, s + h
-            c = (2 * img_w, img_h, 3 * img_w, 2 * img_h)
+            c = (img_w + w0, img_h, img_w + w0 + w, img_h + h)
+            # c = s + w0, s, s + w0 + w, s + h  # original
+            # c = (2 * img_w, img_h, 3 * img_w, 2 * img_h)  # ideal
         elif i == 4:  # bottom right
-            # c = img_w + w0, img_h + hp, img_w + w0 + w, img_h + hp + h
-            # c = s + w0, s + hp, s + w0 + w, s + hp + h
-            c = (2 * img_w, 2 * img_h, 3 * img_w, 3 * img_h)
+            c = (img_w + w0, img_h + hp, img_w + w0 + w, img_h + hp + h)
+            # c = s + w0, s + hp, s + w0 + w, s + hp + h  # original
+            # c = (2 * img_w, 2 * img_h, 3 * img_w, 3 * img_h)  # ideal
         elif i == 5:  # bottom
-            # c = img_w + w0 - w, img_h + h0, img_w + w0, img_h + h0 + h
-            # c = s + w0 - w, s + h0, s + w0, s + h0 + h
-            c = (img_w, 2 * img_h, 2 * img_w, 3 * img_h)
+            c = (img_w + w0 - w, img_h + h0, img_w + w0, img_h + h0 + h)
+            # c = s + w0 - w, s + h0, s + w0, s + h0 + h  # original
+            # c = (img_w, 2 * img_h, 2 * img_w, 3 * img_h)  # ideal
         elif i == 6:  # bottom left
-            # c = img_w + w0 - wp - w, img_h + h0, img_w + w0 - wp, img_h + h0 + h
-            # c = s + w0 - wp - w, s + h0, s + w0 - wp, s + h0 + h
-            c = (0, 2 * img_h, img_w, 3 * img_h)
+            c = (img_w + w0 - wp - w, img_h + h0, img_w + w0 - wp, img_h + h0 + h)
+            # c = s + w0 - wp - w, s + h0, s + w0 - wp, s + h0 + h  # original
+            # c = (0, 2 * img_h, img_w, 3 * img_h)  # ideal
         elif i == 7:  # left
-            # c = img_w - w, img_h + h0 - h, img_w, img_h + h0
+            c = (img_w - w, img_h + h0 - h, img_w, img_h + h0)  # original
             # c = s - w, s + h0 - h, s, s + h0
-            c = (0, img_h, img_w, 2 * img_h)
+            # c = (0, img_h, img_w, 2 * img_h)  # ideal
         elif i == 8:  # top left
-            # c = img_w - w, img_h + h0 - hp - h, img_w, img_h + h0 - hp
-            # c = s - w, s + h0 - hp - h, s, s + h0 - hp
-            c = (0, 0,  img_w, img_h)
+            c = (img_w - w, img_h + h0 - hp - h, img_w, img_h + h0 - hp)
+            # c = s - w, s + h0 - hp - h, s, s + h0 - hp  # original
+            # c = (0, 0,  img_w, img_h)  # ideal
 
         padx, pady = c[:2]
         x1, y1, x2, y2 = [max(x, 0) for x in c]  # allocate coords
