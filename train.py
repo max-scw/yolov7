@@ -485,22 +485,22 @@ def train(hyp: Dict[str, float], opt, device):
                     daemon=True
                 ).start()
 
-                # plot predictions
-                if masks is None or (isinstance(masks, (tuple, list)) and all([el is None for el in masks])):
-                    # no masks
-                    max_n_targets = -1
-                else:
-                    # masks
-                    max_n_targets = max_n_masks = 15
-                Thread(
-                    target=plot_images,
-                    args=(
-                        imgs,   # shape: [batch_size, # channels, height, width]
-                        output_to_target(pred, max_det=max_n_targets)  # shape: [?, 6] -> [batch nr, class id, x, y, w, h]
-                    ),
-                    kwargs={**kwargs, "fname": (path_to_export / f"{filename}_prediction.jpg").as_posix()},
-                    daemon=True
-                ).start()
+                # # plot predictions
+                # if masks is None or (isinstance(masks, (tuple, list)) and all([el is None for el in masks])):
+                #     # no masks
+                #     max_n_targets = -1
+                # else:
+                #     # masks
+                #     max_n_targets = max_n_masks = 50
+                # Thread(
+                #     target=plot_images,
+                #     args=(
+                #         imgs,   # shape: [batch_size, # channels, height, width]
+                #         output_to_target(pred, max_det=max_n_targets)  # shape: [?, 6] -> [batch nr, class id, x, y, w, h]
+                #     ),
+                #     kwargs={**kwargs, "fname": (path_to_export / f"{filename}_prediction.jpg").as_posix()},
+                #     daemon=True
+                # ).start()
 
                 # increment counter
                 n_exported_batches += 1
