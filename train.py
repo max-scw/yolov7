@@ -484,22 +484,24 @@ def train(hyp: Dict[str, float], opt, device):
                     kwargs={**kwargs, "fname": (path_to_export / f"{filename}_label.jpg").as_posix()},
                     daemon=True
                 ).start()
-                # # plot predictions
-                # if masks is None or (isinstance(masks, (tuple, list)) and all([el is None for el in masks])):
-                #     # no masks
-                #     max_n_targets = -1
-                # else:
-                #     # masks
-                #     max_n_targets = max_n_masks
-                # Thread(
-                #     target=plot_images,
-                #     args=(
-                #         imgs,   # shape: [batch_size, # channels, height, width]
-                #         output_to_target(pred, max_det=max_n_targets)  # shape: [?, 6] -> [batch nr, class id, x, y, w, h]
-                #     ),
-                #     kwargs={**kwargs, "fname": (path_to_export / f"{filename}_prediction.jpg").as_posix()},
-                #     daemon=True
-                # ).start()
+
+                # plot predictions
+                if masks is None or (isinstance(masks, (tuple, list)) and all([el is None for el in masks])):
+                    # no masks
+                    max_n_targets = -1
+                else:
+                    # masks
+                    max_n_targets = max_n_masks = 15
+                Thread(
+                    target=plot_images,
+                    args=(
+                        imgs,   # shape: [batch_size, # channels, height, width]
+                        output_to_target(pred, max_det=max_n_targets)  # shape: [?, 6] -> [batch nr, class id, x, y, w, h]
+                    ),
+                    kwargs={**kwargs, "fname": (path_to_export / f"{filename}_prediction.jpg").as_posix()},
+                    daemon=True
+                ).start()
+
                 # increment counter
                 n_exported_batches += 1
             # end batch ------------------------------------------------------------------------------------------------
@@ -641,7 +643,7 @@ if __name__ == '__main__':
     parser.add_argument('--path-to-images', type=str, default=None, help='Path to image folder if they are stored in a different location than the label files.')
     parser.add_argument('--epochs', type=int, default=300)
     parser.add_argument('--batch-size', type=int, default=16, help='total batch size for all GPUs')
-    parser.add_argument('--img-size', nargs='+', type=int, default=[640, 640], help='[train, test] image sizes')
+    parser.add_argument('--img-size', nargs='+', type=int, default=[640, 640], help='Image size')
     parser.add_argument('--rect', action='store_true', help='rectangular training')
     parser.add_argument('--resume', nargs='?', const=True, default=False, help='resume most recent training')
     parser.add_argument('--nosave', action='store_true', help='only save final checkpoint')

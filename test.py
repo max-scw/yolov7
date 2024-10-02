@@ -12,21 +12,35 @@ from tqdm import tqdm
 from models.experimental import attempt_load
 # from utils.datasets import create_dataloader
 from utils.datasets_segments import create_dataloader
-from utils.general import coco80_to_coco91_class, check_dataset, check_file, check_img_size, check_requirements, \
-    box_iou, non_max_suppression, scale_coords, xyxy2xywh, xywh2xyxy, set_logging, increment_path, colorstr, set_process_title
+from utils.general import (
+    coco80_to_coco91_class,
+    check_dataset,
+    check_file,
+    check_img_size,
+    check_requirements,
+    box_iou,
+    non_max_suppression,
+    scale_coords,
+    xyxy2xywh,
+    xywh2xyxy,
+    set_logging,
+    increment_path,
+    colorstr,
+    set_process_title
+)
 from utils.general_mask import mask_iou, process_mask, process_mask_upsample, scale_masks
 from utils.metrics import ap_per_class, ConfusionMatrix
 from utils.plots import plot_images, output_to_target, plot_study_txt
 from utils.torch_utils import select_device, time_synchronized, TracedModel
 
-from typing import Union
+from typing import Union, Tuple
 
 
 def test(
         data,
         weights=None,
         batch_size: int = 32,
-        imgsz: int = 640,
+        imgsz: Union[int, Tuple[int, int]] = 640,
         conf_thres: float = 0.001,
         iou_thres: float = 0.6,  # for NMS
         save_json: bool = False,
@@ -73,8 +87,8 @@ def test(
         # Load model
         model = attempt_load(weights, map_location=device)  # load FP32 model
         gs = max(int(model.stride.max()), 32)  # grid size (max stride)
-        imgsz = check_img_size(imgsz, s=gs)  # check img_size
-        
+        imgsz = [check_img_size(x, gs) for x in imgsz]  # verify imgsz are gs-multiples
+
         if trace:
             model = TracedModel(model, device, imgsz)
 
@@ -87,8 +101,8 @@ def test(
     model.eval()
     if isinstance(data, str):
         is_coco = data.endswith('coco.yaml')
-        with open(data) as f:
-            data = yaml.load(f, Loader=yaml.SafeLoader)
+        with open(data) as fid:
+            data = yaml.load(fid, Loader=yaml.SafeLoader)
     check_dataset(data)  # check
     n_classes = 1 if single_cls else int(data['nc'])  # number of classes
     iouv = torch.linspace(0.5, 0.95, 10).to(device)  # iou vector for mAP@0.5:0.95
@@ -106,8 +120,8 @@ def test(
         task = opt.task if opt.task in ('train', 'val', 'test') else 'val'  # path to train/val/test images
         dataloader, _ = create_dataloader(
             data[task], imgsz, batch_size, gs, opt,
-            pad=0.5,
-            rect=True,
+            # pad=0.5,
+            rect=False,
             prefix=colorstr(f'{task}: '),
             overlap=overlap,
             augment=False
@@ -141,7 +155,7 @@ def test(
         with torch.no_grad():
             # Run model
             t = time_synchronized()
-            out, train_out = model(img, augment=augment)  # inference and training outputs
+            pred, train_out = model(img, augment=augment)  # inference and training outputs
             t0 += time_synchronized() - t
 
             # Compute loss
@@ -153,9 +167,10 @@ def test(
             # Run NMS (on xywh coordintate)
             targets[:, 2:6] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels
             lb = [targets[targets[:, 0] == i, 1:] for i in range(batch_size)] if save_hybrid else []  # for autolabelling
+
             t = time_synchronized()
             out = non_max_suppression(
-                out,
+                pred,
                 conf_thres=conf_thres,
                 iou_thres=iou_thres,
                 labels=lb,
@@ -389,7 +404,7 @@ if __name__ == '__main__':
     parser.add_argument('--weights', nargs='+', type=str, default='yolov7.pt', help='model.pt path(s)')
     parser.add_argument('--data', type=str, default='data/coco.yaml', help='*.data path')
     parser.add_argument('--batch-size', type=int, default=32, help='size of each image batch')
-    parser.add_argument('--img-size', type=int, default=640, help='inference size (pixels)')
+    parser.add_argument('--img-size', nargs='+', type=int, default=[640, 640], help='Image size')
     parser.add_argument('--conf-thres', type=float, default=0.001, help='object confidence threshold')
     parser.add_argument('--iou-thres', type=float, default=0.65, help='IOU threshold for NMS')
     parser.add_argument('--task', default='val', help='train, val, test, speed or study')
