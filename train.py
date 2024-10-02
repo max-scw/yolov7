@@ -460,7 +460,7 @@ def train(hyp: Dict[str, float], opt, device):
                 info_str = ('%10s' * 2 + '%10.4g' * 7) % (eps, mem, *mloss, targets.shape[0], imgs.shape[-1])
                 pbar.set_description(info_str)
 
-            if ((opt.n_batches_to_plot > 0) and (n_exported_batches <= opt.n_batches_to_plot)) or\
+            if ((opt.n_batches_to_plot > 0) and (n_exported_batches <= opt.n_batches_to_plot)) or \
                 (plots and n_integrated_batches < 10):
 
                 path_to_export = Path(save_dir) / "training_batches"
@@ -500,6 +500,8 @@ def train(hyp: Dict[str, float], opt, device):
                 #     kwargs={**kwargs, "fname": (path_to_export / f"{filename}_prediction.jpg").as_posix()},
                 #     daemon=True
                 # ).start()
+                # increment counter
+                n_exported_batches += 1
             # end batch ------------------------------------------------------------------------------------------------
         # end epoch ----------------------------------------------------------------------------------------------------
 
@@ -686,11 +688,9 @@ if __name__ == '__main__':
 
 
     parser.add_argument('--process-title', type=str, default=None, help='Names the process')
-    parser.add_argument("--logging-level", type=int, default=None, help="Logging level")
+    parser.add_argument("--logging-level", type=Union[int, str], default=None, help="Logging level")
 
     opt = parser.parse_args()
-
-    logging.debug(f"Input arguments train.py: {opt}")
 
     if opt.process_title:
         set_process_title(opt.process_title)
