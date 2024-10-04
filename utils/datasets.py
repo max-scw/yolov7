@@ -728,12 +728,14 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         if self.augment:
             # Augment image space
             if not mosaic:
-                img, labels = random_perspective(img, labels,
-                                                 degrees=hyp['degrees'],
-                                                 translate=hyp['translate'],
-                                                 scale=hyp['scale'],
-                                                 shear=hyp['shear'],
-                                                 perspective=hyp['perspective'])
+                img, labels = random_perspective(
+                    img, labels,
+                    degrees=hyp['degrees'],
+                    translate=hyp['translate'],
+                    scale=hyp['scale'],
+                    shear=hyp['shear'],
+                    perspective=hyp['perspective']
+                )
             if self.albumentations is not None:
                 img, labels, masks = self.albumentations(img, labels, masks)
 

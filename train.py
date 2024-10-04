@@ -254,7 +254,7 @@ def train(hyp: Dict[str, float], opt, device):
     n_detection_layers = model.model[-1].n_layers  # number of detection layers (used for scaling hyp['obj'])
     imgsz = [check_img_size(x, gs) for x in opt.img_size]  # verify imgsz are gs-multiples
     logging.debug(f"Image size: {imgsz}, Grid size {gs}")
-    imgsz_test = imgsz
+
     # DP mode
     if cuda and rank == -1 and torch.cuda.device_count() > 1:
         model = torch.nn.DataParallel(model)
@@ -270,7 +270,7 @@ def train(hyp: Dict[str, float], opt, device):
         train_path, imgsz, batch_size, gs, opt,
         hyp=hyp,
         cache=opt.cache_images,
-        rect=opt.rect,
+        rect=opt.rect if "rect" in opt else False,
         rank=rank,
         world_size=opt.world_size,
         workers=opt.workers,
@@ -293,11 +293,12 @@ def train(hyp: Dict[str, float], opt, device):
 
     # Process 0
     if rank in [-1, 0]:
+        # Testloader
         testloader, _ = create_dataloader(
-            test_path, imgsz_test, batch_size * 2, gs, opt,  # testloader
+            test_path, imgsz, batch_size * 2, gs, opt,  # testloader
             hyp=hyp,
             cache=opt.cache_images and not opt.notest,
-            rect=True,
+            rect=opt.rect if "rect" in opt else False,
             rank=-1,
             world_size=opt.world_size,
             workers=opt.workers,
@@ -352,7 +353,7 @@ def train(hyp: Dict[str, float], opt, device):
     scaler = amp.GradScaler(enabled=cuda)
     compute_loss_ota = ComputeLossOTA(model)  # init loss class
     compute_loss = ComputeLoss(model)  # init loss class
-    logger.info(f'Image sizes {imgsz} train, {imgsz_test} test\n'
+    logger.info(f'Image sizes {imgsz},\n'
                 f'Using {dataloader.num_workers} dataloader workers\n'
                 f'Logging results to {save_dir}\n'
                 f'Starting training for {epochs} epochs...')
@@ -419,6 +420,8 @@ def train(hyp: Dict[str, float], opt, device):
             with amp.autocast(enabled=cuda):
                 # predict
                 pred = model(imgs)  # forward
+                # for j in range(len(imgs)):
+                #     Image.fromarray(np.array(imgs[j] * 255, dtype=np.uint8).transpose(1, 2, 0)).show()
 
                 masks_ = masks.to(device) if isinstance(masks, torch.Tensor) else masks
 
@@ -521,7 +524,7 @@ def train(hyp: Dict[str, float], opt, device):
                 results, maps, times = test.test(
                     data_dict,
                     batch_size=batch_size * 2,
-                    imgsz=imgsz_test,
+                    imgsz=imgsz,
                     model=ema.ema,
                     single_cls=opt.single_cls,
                     dataloader=testloader,
@@ -564,7 +567,7 @@ def train(hyp: Dict[str, float], opt, device):
                 }
 
                 # Save last, best and delete
-                if not opt.save_not_every_epoch:
+                if (((i_epoch % opt.save_period) == 0) and i_epoch > 0) or (not opt.save_not_every_epoch) :
                     torch.save(ckpt, last)
                 if best_fitness == fi:
                     torch.save(ckpt, best)
@@ -608,7 +611,7 @@ def train(hyp: Dict[str, float], opt, device):
                 results, _, _ = test.test(
                     opt.data,
                     batch_size=batch_size * 2,
-                    imgsz=imgsz_test,
+                    imgsz=imgsz,
                     conf_thres=0.001,
                     iou_thres=0.7,  # Only for NMS
                     model=attempt_load(m, device).half(),
@@ -644,7 +647,7 @@ if __name__ == '__main__':
     parser.add_argument('--epochs', type=int, default=300)
     parser.add_argument('--batch-size', type=int, default=16, help='total batch size for all GPUs')
     parser.add_argument('--img-size', nargs='+', type=int, default=[640, 640], help='Image size')
-    parser.add_argument('--rect', action='store_true', help='rectangular training')
+    # parser.add_argument('--rect', action='store_true', help='rectangular training')
     parser.add_argument('--resume', nargs='?', const=True, default=False, help='resume most recent training')
     parser.add_argument('--nosave', action='store_true', help='only save final checkpoint')
     parser.add_argument('--notest', action='store_true', help='only test final epoch')
@@ -687,7 +690,6 @@ if __name__ == '__main__':
                         help="Do not apply mosaic augmentation.")
     parser.add_argument('--masks', action='store_true', help='Models polygons within the bounding boxes.')
     parser.add_argument('--save-not-every-epoch', action='store_true', help='Does not save every epoch as last.pt')
-
 
     parser.add_argument('--process-title', type=str, default=None, help='Names the process')
     parser.add_argument("--logging-level", type=Union[int, str], default=None, help="Logging level")
