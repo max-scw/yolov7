@@ -443,7 +443,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
     def __init__(
             self,
             path_to_data_info: Union[str, Path],
-            img_size: int = 640,
+            img_size: Union[int, Tuple[int, int]] = 640,
             batch_size: int = 16,
             augment: bool = False,
             hyp=None,
