@@ -959,7 +959,7 @@ def load_mosaic(self, index):
     labels4, segments4 = [], []
     img_w, img_h = self.img_size
     # pick random center to crop the image later
-    yc, xc = [int(random.uniform(-x, 2 * s + x)) for x, s in zip(self.mosaic_border, (img_w, img_h))]  # mosaic center x, y
+    yc, xc = [int(random.uniform(-x, 2 * s + x)) for x, s in zip(self.mosaic_border, (img_h, img_w))]  # mosaic center x, y
 
     indices = [index] + random.choices(self.indices, k=3)  # 3 additional image indices
     for i, index in enumerate(indices):
@@ -1004,13 +1004,15 @@ def load_mosaic(self, index):
     # img4, labels4, segments4 = remove_background(img4, labels4, segments4)
     # sample_segments(img4, labels4, segments4, probability=self.hyp['copy_paste'])
     img4, labels4, segments4 = copy_paste(img4, labels4, segments4, probability=self.hyp['copy_paste'])
-    img4, labels4 = random_perspective(img4, labels4, segments4,
-                                       degrees=self.hyp['degrees'],
-                                       translate=self.hyp['translate'],
-                                       scale=self.hyp['scale'],
-                                       shear=self.hyp['shear'],
-                                       perspective=self.hyp['perspective'],
-                                       border=self.mosaic_border)  # border to remove
+    img4, labels4 = random_perspective(
+        img4, labels4, segments4,
+        degrees=self.hyp['degrees'],
+        translate=self.hyp['translate'],
+        scale=self.hyp['scale'],
+        shear=self.hyp['shear'],
+        perspective=self.hyp['perspective'],
+        border=self.mosaic_border
+    )  # border to remove
 
     return img4, labels4
 
