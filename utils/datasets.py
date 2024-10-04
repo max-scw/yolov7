@@ -914,7 +914,7 @@ def load_image(self, index):
         assert img is not None, f"Image Not Found {p2img.as_posix()}"
 
         h0, w0 = img.shape[:2]  # orig hw
-        resize_factor = np.array(self.img_size) / (h0, w0)  # resize image to img_size
+        resize_factor = np.array(self.img_size) / (w0, h0)  # resize image to img_size
         if any(resize_factor != 1):  # always resize down, only resize up if training with augmentation
             # interpolation method (code)
             interp = cv2.INTER_AREA if (any(resize_factor < 1) and not self.augment) else cv2.INTER_LINEAR
