@@ -88,6 +88,9 @@ def test(
         model = attempt_load(weights, map_location=device)  # load FP32 model
         gs = max(int(model.stride.max()), 32)  # grid size (max stride)
         imgsz = [check_img_size(x, gs) for x in imgsz]  # verify imgsz are gs-multiples
+        if len(imgsz) == 1:
+            # expand to 2-element tuple
+            imgsz = (imgsz[0], imgsz[0])
 
         if trace:
             model = TracedModel(model, device, imgsz)
@@ -116,12 +119,12 @@ def test(
     # Dataloader
     if not training:
         if device.type != 'cpu':
-            model(torch.zeros(1, 3, imgsz, imgsz).to(device).type_as(next(model.parameters())))  # run once
+            model(torch.zeros(1, 3, *imgsz).to(device).type_as(next(model.parameters())))  # run once
         task = opt.task if opt.task in ('train', 'val', 'test') else 'val'  # path to train/val/test images
         dataloader, _ = create_dataloader(
             data[task], imgsz, batch_size, gs, opt,
             # pad=0.5,
-            rect=False,
+            rect=opt.rect if (opt is not None) and ("rect" in opt) else False,
             prefix=colorstr(f'{task}: '),
             overlap=overlap,
             augment=False
@@ -350,7 +353,7 @@ def test(
             print(pf % (names[c], seen, nt[c], p[i], r[i], ap50[i], ap[i]))
 
     # Print speeds
-    t = tuple(x / seen * 1E3 for x in (t0, t1, t0 + t1)) + (imgsz, imgsz, batch_size)  # tuple
+    t = tuple(x / seen * 1E3 for x in (t0, t1, t0 + t1)) + (*imgsz, batch_size)  # tuple
     if not training:
         print('Speed: %.1f/%.1f/%.1f ms inference/NMS/total per %gx%g image at batch-size %g' % t)
 
