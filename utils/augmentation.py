@@ -13,8 +13,16 @@ import numpy as np
 
 from typing import Union, Dict
 
+from utils.plots import plot_images, plot_one_box
+from utils.general import xywh2xyxy
 
-def build_augmentation_pipeline(config_file: Union[str, Path], probability: float = None, verbose: bool = False):
+
+def build_augmentation_pipeline(
+        config_file: Union[str, Path],
+        probability: float = None,
+        verbose: bool = False,
+        overwrite_probability: bool = False
+) -> list:
 
     config_file = Path(config_file)
     if not config_file.exists() or not config_file.is_file():
@@ -36,7 +44,12 @@ def build_augmentation_pipeline(config_file: Union[str, Path], probability: floa
     # TODO: support other transformation packages
     transformations = []
     if "albumentations" in config:
-        transformations = build_albumentations_pipeline(config["albumentations"], p=probability, verbose=verbose)
+        transformations = build_albumentations_pipeline(
+            config["albumentations"],
+            p=probability,
+            verbose=verbose,
+            overwrite_p=overwrite_probability,
+        )
     return transformations
 
 
@@ -92,19 +105,23 @@ def parse_arguments(config: Dict[str, dict]) -> Dict[str, dict]:
 def build_albumentations_pipeline(
         config: Dict[str, dict],
         p: float = None,
-        verbose: bool = False) -> list:
+        verbose: bool = False,
+        overwrite_p: bool = False,
+) -> list:
     """
     creates a list of transformation functions from the albumentations package
     :param config: Dictionary specifying the function names and arguments of each function
     :param p: probability to apply a transformation. This value overwrites the values in the config file
     :param verbose: prints the transformation function
+    :param overwrite_p: overwrites the values in the config file
     :return: list of albumentations transformation functions
     """
 
     # loop through specified functions and options
     trafo_fncs = []
     for fnc, opts in config.items():
-        if p:
+
+        if p and (overwrite_p or ("p" not in opts)):
             opts["p"] = p
 
         # get transformation function
@@ -123,39 +140,20 @@ def create_examples(
         export_dir: Union[str, Path] = None,
         oversampling: int = 1
 ):
-
-    # read augmentation config
-    with open(config_file, "r") as fid:
-        config_txt = yaml.load(fid, Loader=yaml.SafeLoader)
-
-    # parse / cast function arguments
-    config = parse_arguments(config_txt)
-
-    config_albumentations = config["albumentations"]
-
-    # transforms that always apply
-    config_always = dict()
-    config_ = dict()
-    for fnc, opts in config_albumentations.items():
-        if "always_apply" in opts:
-            config_always[fnc] = opts
-        else:
-            config_[fnc] = opts
-
+    trafo_fnc = build_augmentation_pipeline(
+        config_file,
+        verbose=True
+    )
 
     transforms = dict()
-    for fnc, opts in config_.items():
-        config_tmp = config_always.copy()
-        config_tmp[fnc] = opts.copy()
-
-        trafo_fnc = []
-        for fnc_, opts_ in config_tmp.items():
-            opts_["always_apply"] = True
-            # get transformation function
-            trafo_fnc.append(getattr(A, fnc_)(**opts_))
-
+    for fnc in trafo_fnc:
+        # always apply function
+        fnc.always_apply = True
+        # get class name
+        name = fnc.__class__.__name__
         # compose
-        transforms[fnc] = A.Compose(trafo_fnc)
+        kwargs = {"bbox_params": A.BboxParams(format="yolo", label_fields=["class_labels"])}
+        transforms[name] = A.Compose(trafo_fnc, **kwargs)
 
     # get images that should be transformed
     image_dir_ = Path(image_dir)
@@ -171,13 +169,24 @@ def create_examples(
     for p2img in images:
         # read image
         img = cv.imread(p2img.as_posix(), cv.IMREAD_COLOR)
+        # read label
+        if p2img.with_suffix(".txt").exists():
+            lbl = np.loadtxt(p2img.with_suffix(".txt"))
+        else:
+            lbl = None
+
         # apply trafos
         for nm, fnc in transforms.items():
             imgs_oversampled, row = [], []
             j = 0
             for i in range(oversampling):
-                out = fnc(image=img.copy())
+                out = fnc(image=img.copy(), bboxes=lbl[:, 1:5], class_labels=lbl[:, 0])
                 img_transformed = out["image"]
+                bbx_transformed = out["bboxes"]
+
+                bbx_xyxy = xywh2xyxy(np.asarray(bbx_transformed)) * (img.shape[:2][::-1] * 2)
+                for bbx in bbx_xyxy.astype(int):
+                    plot_one_box(bbx, img_transformed, (0, 255, 0))
                 # store transformed image
                 row.append(img_transformed)
 
@@ -196,6 +205,7 @@ def create_examples(
             # stack images
             img_stacked_transforms = np.vstack(imgs_oversampled)
 
+
             p2save = export_dir / nm
             if not p2save.exists():
                 p2save.mkdir(parents=True)
@@ -207,11 +217,11 @@ def create_examples(
 
 
 if __name__ == "__main__":
-    # build_augmentation_pipeline("../data/augmentation-yolov7.yaml")
+    # build_augmentation_pipeline("../data/Test-augmentation.yaml", probability=0.1)
 
     create_examples(
-        config_file="../data/CRU-augmentation.yaml",
-        image_dir=r"C:\Users\schwmax\OneDrive - Voith Group of Companies\ProductionDataArchive\ImageData\RotorAssembly\data\img\20240808_131434.jpg",
+        config_file="../data/Test-augmentation.yaml",
+        image_dir=r"..\data\img\2024-06-20_19-34-42-6930jfz_Input0_Camera0.jpg",
         export_dir="export",
-        oversampling=20
+        oversampling=16
     )
