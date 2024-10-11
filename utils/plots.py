@@ -83,13 +83,13 @@ def plot_one_box(
         color: Union[Tuple[int, int, int], List[int], str] = None,
         label: str = None,
         line_thickness: int = 3
-):
+) -> None:
     # Plots one bounding box on image img
     tl = line_thickness or round(0.002 * (img.shape[0] + img.shape[1]) / 2) + 1  # line/font thickness
     color_ = color2rgb(color)
 
     c1, c2 = (int(x[0]), int(x[1])), (int(x[2]), int(x[3]))
-    cv2.rectangle(img, c1, c2, color_, thickness=tl, lineType=cv2.LINE_AA)
+    cv2.rectangle(img, c1, c2, color_, thickness=int(tl), lineType=cv2.LINE_AA)
     if label:
         tf = max(tl - 1, 1)  # font thickness
         t_size = cv2.getTextSize(label, 0, fontScale=tl / 3, thickness=tf)[0]
