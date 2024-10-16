@@ -153,7 +153,7 @@ def create_examples(
         name = fnc.__class__.__name__
         # compose
         kwargs = {"bbox_params": A.BboxParams(format="yolo", label_fields=["class_labels"])}
-        transforms[name] = A.Compose(trafo_fnc, **kwargs)
+        transforms[name] = A.Compose([fnc], **kwargs)
 
     # get images that should be transformed
     image_dir_ = Path(image_dir)
@@ -177,6 +177,7 @@ def create_examples(
 
         # apply trafos
         for nm, fnc in transforms.items():
+            print(f"{nm}: {fnc}")
             imgs_oversampled, row = [], []
             j = 0
             for i in range(oversampling):
@@ -184,7 +185,7 @@ def create_examples(
                 img_transformed = out["image"]
                 bbx_transformed = out["bboxes"]
 
-                bbx_xyxy = xywh2xyxy(np.asarray(bbx_transformed)) * (img.shape[:2][::-1] * 2)
+                bbx_xyxy = xywh2xyxy(np.asarray(bbx_transformed)) * (img_transformed.shape[:2][::-1] * 2)
                 for bbx in bbx_xyxy.astype(int):
                     plot_one_box(bbx, img_transformed, (0, 255, 0))
                 # store transformed image
@@ -192,7 +193,11 @@ def create_examples(
 
                 j += 1
                 if j >= n_col:
-                    imgs_oversampled.append(np.hstack(row))
+                    # pad images if necessary
+                    max_shape = np.array([el.shape for el in row]).max(axis=0)
+                    row_pad = [np.pad(el, [(0, x) for x in max_shape - el.shape], mode='constant') for el in row]
+                    imgs_oversampled.append(np.hstack(row_pad))
+
                     row = []
                     j = 0
                 elif i >= (oversampling - 1):
