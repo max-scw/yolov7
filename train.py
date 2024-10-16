@@ -19,7 +19,6 @@ import torch.utils.data
 import yaml
 from torch.cuda import amp
 from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 import test  # import test.py to get mAP after each epoch
@@ -28,9 +27,23 @@ from models.yolo import Model
 from utils.autoanchor import check_anchors
 # from utils.datasets import create_dataloader
 from utils.datasets_segments import create_dataloader
-from utils.general import (labels_to_class_weights, increment_path, labels_to_image_weights, init_seeds,
-                           strip_optimizer, get_latest_run, check_dataset, check_file, check_img_size,
-                           print_mutation, set_logging, one_cycle, colorstr, set_process_title)
+from utils.general import (
+    labels_to_class_weights,
+    increment_path,
+    labels_to_image_weights,
+    init_seeds,
+    strip_optimizer,
+    get_latest_run,
+    check_dataset,
+    check_file,
+    check_img_size,
+    print_mutation,
+    set_logging,
+    one_cycle,
+    colorstr,
+    set_process_title,
+    non_max_suppression
+)
 from utils.metrics import fitness
 from utils.google_utils import attempt_download
 from utils.loss import ComputeLoss, ComputeLossOTA
@@ -253,6 +266,10 @@ def train(hyp: Dict[str, float], opt, device):
     gs = max(int(model.stride.max()), 32)  # grid size (max stride)
     n_detection_layers = model.model[-1].n_layers  # number of detection layers (used for scaling hyp['obj'])
     imgsz = [check_img_size(x, gs) for x in opt.img_size]  # verify imgsz are gs-multiples
+    if len(imgsz) < 2:
+        imgsz = (imgsz[0], imgsz[0])
+    elif len(imgsz) > 2:
+        raise ValueError(f"Too many values for --img-size. Expecting one or two values but were: {opt.img_size}")
     logging.debug(f"Image size: {imgsz}, Grid size {gs}")
 
     # DP mode
@@ -338,14 +355,17 @@ def train(hyp: Dict[str, float], opt, device):
     model.nc = n_classes  # attach number of classes to model
     model.hyp = hyp  # attach hyperparameters to model
     model.gr = 1.0  # iou loss ratio (obj_loss = 1.0 or iou)
-    model.class_weights = labels_to_class_weights(dataset.labels, n_classes).to(
-        device) * n_classes  # attach class weights
+    model.class_weights = labels_to_class_weights(dataset.labels, n_classes).to(device) * n_classes  # attach class weights
     model.names = names
+    # thresholds for training
+    conf_th_t = hyp["conf_th_t"] if "conf_th_t" in hyp else 0.001
+    iou_t = hyp["iou_t"] if "iou_t" in hyp else 0.7
 
     # Start training
     t0 = time.time()
-    n_warmup_iterations = max(round(hyp['warmup_epochs'] * n_batches),
-                              1000)  # number of warmup iterations, max(3 epochs, 1k iterations)
+    n_warmup_iterations = max(
+        round(hyp['warmup_epochs'] * n_batches), 1000
+    )  # number of warmup iterations, max(3 epochs, 1k iterations)
     # nw = min(nw, (epochs - start_epoch) / 2 * nb)  # limit warmup to < 1/2 of training
     maps = np.zeros(n_classes)  # mAP per class
     results = (0, 0, 0, 0, 0, 0, 0, 0)  # P, R, mAP@.5, mAP@.5-.95, val_loss(box, obj, cls, add)
@@ -403,8 +423,11 @@ def train(hyp: Dict[str, float], opt, device):
                 accumulate = max(1, warmup_batch)
                 for j, x in enumerate(optimizer.param_groups):
                     # bias lr falls from 0.1 to lr0, all other lrs rise from 0.0 to lr0
-                    x['lr'] = np.interp(n_integrated_batches, xi,
-                                        [hyp['warmup_bias_lr'] if j == 2 else 0.0, x['initial_lr'] * lf(i_epoch)])
+                    x['lr'] = np.interp(
+                        n_integrated_batches,
+                        xi,
+                        [hyp['warmup_bias_lr'] if j == 2 else 0.0, x['initial_lr'] * lf(i_epoch)]
+                    )
                     if 'momentum' in x:
                         x['momentum'] = np.interp(n_integrated_batches, xi, [hyp['warmup_momentum'], hyp['momentum']])
 
@@ -463,6 +486,7 @@ def train(hyp: Dict[str, float], opt, device):
                 info_str = ('%10s' * 2 + '%10.4g' * 7) % (eps, mem, *mloss, targets.shape[0], imgs.shape[-1])
                 pbar.set_description(info_str)
 
+            # export images
             if ((opt.n_batches_to_plot > 0) and (n_exported_batches <= opt.n_batches_to_plot)) or \
                 (plots and n_integrated_batches < 10):
 
@@ -519,7 +543,7 @@ def train(hyp: Dict[str, float], opt, device):
             # mAP
             ema.update_attr(model, include=['yaml', 'nc', 'hyp', 'gr', 'names', 'stride', 'class_weights'])
             final_epoch = i_epoch + 1 == epochs
-            if not opt.notest or final_epoch:  # Calculate mAP
+            if (not opt.notest) or final_epoch:  # Calculate mAP
                 # wandb_logger.current_epoch = epoch + 1
                 results, maps, times = test.test(
                     data_dict,
@@ -533,7 +557,9 @@ def train(hyp: Dict[str, float], opt, device):
                     plots=plots and final_epoch,
                     compute_loss=compute_loss,
                     is_coco=is_coco,
-                    v5_metric=opt.v5_metric
+                    v5_metric=opt.v5_metric,
+                    conf_thres=conf_th_t,
+                    iou_thres=iou_t,
                 )
 
             # Write
@@ -612,8 +638,8 @@ def train(hyp: Dict[str, float], opt, device):
                     opt.data,
                     batch_size=batch_size * 2,
                     imgsz=imgsz,
-                    conf_thres=0.001,
-                    iou_thres=0.7,  # Only for NMS
+                    conf_thres=conf_th_t,
+                    iou_thres=iou_t,  # Only for NMS
                     model=attempt_load(m, device).half(),
                     single_cls=opt.single_cls,
                     dataloader=testloader,
@@ -683,7 +709,7 @@ if __name__ == '__main__':
     parser.add_argument("--augmentation-probability", type=float, default=None,
                         help="Probability to apply data augmentation based on the albumentations package.")
     parser.add_argument("--augmentation-config", type=str, default="data/augmentation-yolov7.yaml",
-                        help="Path to config file with specifications for transformation functions to augment the trainig data.")
+                        help="Path to config file with specifications for transformation functions to augment the training data.")
     parser.add_argument("--n-batches-to-plot", type=int, default=0,
                         help="Number of batches to plot.")
     parser.add_argument("--no-mosaic-augmentation", action='store_true',
@@ -764,7 +790,8 @@ if __name__ == '__main__':
             'cls_pw': (1, 0.5, 2.0),  # cls BCELoss positive_weight
             'obj': (1, 0.2, 4.0),  # obj loss gain (scale with pixels)
             'obj_pw': (1, 0.5, 2.0),  # obj BCELoss positive_weight
-            # 'iou_t': (0, 0.1, 0.7),  # IoU training threshold
+            'iou_t': (0, 0.1, 0.7),  # IoU training threshold
+            'conf_th_t': (0, 0.001, 0.5),  # confidence threshold for training
             'anchor_t': (1, 2.0, 8.0),  # anchor-multiple threshold
             'anchors': (2, 2.0, 10.0),  # anchors per output grid (0 to ignore)
             'fl_gamma': (0, 0.0, 2.0),  # focal loss gamma (efficientDet default gamma=1.5, RetinaNet gamma=2, robust in [0.5, 5])
